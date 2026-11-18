@@ -120,17 +120,21 @@ EOF
 say "Keeping the computer awake (a sleeping PC drops every student)"
 systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target >/dev/null 2>&1 || true
 
+say "Setting up a fixed network address (the student link never changes)"
+systemctl stop $SVC 2>/dev/null || true
+(set -a; . $ENVF; set +a; cd $APP && .venv/bin/python launcher.py --fixed-ip) || echo "Fixed address skipped: the normal address is used."
+
 systemctl daemon-reload
 systemctl enable $SVC >/dev/null
 systemctl restart $SVC
 command -v ufw >/dev/null && ufw status | grep -q "Status: active" && ufw allow 8000/tcp >/dev/null || true
 
 for i in $(seq 1 30); do curl -s http://127.0.0.1:8765/api/status -o /tmp/astra-st.json && break; sleep 1; done
-IP=$(hostname -I | awk '{print $1}')
+STUDENTS=$(python3 -c "import json;print(json.load(open('/tmp/astra-st.json'))['student_url'])" 2>/dev/null || echo "http://$(hostname -I | awk '{print $1}'):8000/")
 PW=$(python3 -c "import json;print(json.load(open('$DATA/launcher.json')).get('first_password') or '')" 2>/dev/null || true)
 say "Done. ASTRA Code Arena is running and starts by itself after every reboot."
 echo "  Control panel (this PC): open 'ASTRA Code Arena' from the app menu, or run: astra-arena"
-echo "  Students:                http://$IP:8000/"
+echo "  Students:                $STUDENTS"
 echo "  Check health:            astra-arena doctor"
 [ -n "$PW" ] && echo "  First admin login:       admin / $PW   (you must change it; the organiser link is in the control panel)"
 exit 0

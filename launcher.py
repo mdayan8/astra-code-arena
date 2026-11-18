@@ -4,6 +4,7 @@ Also: opening hours, address/port, firewall, start-at-boot, backups, Diagnose & 
     python launcher.py               open the panel (starts it if it is not running)
     python launcher.py --background  run without opening a browser (what the systemd service uses)"""
 import http.server
+import ipaddress
 import json
 import os
 import secrets
@@ -31,7 +32,7 @@ LOGS.mkdir(parents=True, exist_ok=True)
 SERVICE = "astra-arena"
 IS_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
 TOKEN = secrets.token_urlsafe(16)
-DEFAULT = {"port": 8000, "bind": "0.0.0.0", "workers": None, "run_on_open": True, "running": True, "backup_mirror": "", "first_password": None}
+DEFAULT = {"port": 8000, "bind": "0.0.0.0", "workers": None, "run_on_open": True, "running": True, "backup_mirror": "", "first_password": None, "auto_ip": True, "fixed_ip": None}
 APT = {"c": "gcc", "cpp": "g++", "python": "python3", "java": "default-jdk-headless", "javascript": "nodejs", "go": "golang-go", "rust": "rustc"}
 PARTS = (("web", "app.main"), ("judge", "app.worker"))
 
@@ -74,6 +75,83 @@ def lan_ips():
     if code == 0:
         ips.update(x for x in out.split() if "." in x)
     return sorted(i for i in ips if not i.startswith(("127.", "172.17.")))
+
+
+# ---------- fixed address: the student link never changes, even if DHCP gives this PC a new address ----------
+def net_info():
+    """-> (device, gateway, [IPv4Interface on that device]) for the default route, or None."""
+    code, out = sh("ip", "-4", "route", "show", "default")
+    if code or " dev " not in out:
+        return None
+    first = out.splitlines()[0]
+    dev = first.split(" dev ")[1].split()[0]
+    gw = first.split(" via ")[1].split()[0] if " via " in first else None
+    addrs = [ipaddress.ip_interface(l.split()[3]) for l in sh("ip", "-4", "-o", "addr", "show", "dev", dev)[1].splitlines() if " inet " in l]
+    return dev, gw, addrs
+
+
+def candidates(primary, gw):
+    """Addresses near the top of this PC's subnet (DHCP pools usually hand out the low ones first); a /16 or bigger uses this PC's /24."""
+    net = primary.network if primary.network.prefixlen >= 24 else ipaddress.ip_network(f"{primary.ip}/24", strict=False)
+    hi = int(net.broadcast_address) - 4  # skip the very top, where routers often sit
+    skip = {int(primary.ip), int(ipaddress.ip_address(gw)) if gw else -1}
+    for n in range(hi, max(int(net.network_address), hi - 100), -1):
+        if n not in skip:
+            yield ipaddress.ip_address(n)
+
+
+def ip_free(ip, dev):
+    if sh("ping", "-c", "2", "-W", "1", str(ip), timeout=6)[0] == 0:
+        return False
+    return "lladdr" not in sh("ip", "neigh", "show", str(ip), "dev", dev)[1]  # silent hosts still answer ARP
+
+
+def reachable(gw, src):
+    return gw is None or sh("ping", "-c", "2", "-W", "1", "-I", str(src), gw, timeout=6)[0] == 0
+
+
+def ensure_fixed_ip():
+    """Keep one fixed extra address on the LAN card (DHCP stays on, so nothing else breaks). Returns the address or None."""
+    if not (S["auto_ip"] and IS_ROOT and shutil.which("nmcli") and shutil.which("ip")):
+        return None
+    info = net_info()
+    if not info or not info[2]:
+        return None
+    dev, gw, addrs = info
+    have = {str(a.ip) for a in addrs}
+    if S["fixed_ip"] in have:
+        return S["fixed_ip"]
+    con = sh("nmcli", "-g", "GENERAL.CONNECTION", "device", "show", dev)[1].strip()
+    if not con:
+        return None
+    dyn = [a for a in addrs if str(a.ip) != S["fixed_ip"]]
+    primary = dyn[0]
+    if S["fixed_ip"]:  # moved to another network or lost it: drop the old one
+        for a in sh("nmcli", "-g", "ipv4.addresses", "connection", "show", con)[1].replace("\\", "").split(","):
+            if a.strip().startswith(S["fixed_ip"] + "/"):
+                sh("nmcli", "connection", "modify", con, "-ipv4.addresses", a.strip())
+    gw_ok = reachable(gw, primary.ip)
+    for ip in candidates(primary, gw):
+        if not ip_free(ip, dev):
+            continue
+        cidr = f"{ip}/{primary.network.prefixlen}"
+        sh("nmcli", "connection", "modify", con, "+ipv4.addresses", cidr, "ipv4.dad-timeout", "3000")
+        sh("nmcli", "device", "reapply", dev, timeout=30)
+        time.sleep(4)
+        now = {str(a.ip) for a in (net_info() or (0, 0, []))[2]}
+        if str(ip) in now and (not gw_ok or reachable(gw, ip)):
+            S["fixed_ip"] = str(ip)
+            save()
+            return S["fixed_ip"]
+        # someone else had it, or the campus network blocks self-chosen addresses: undo and try the next one
+        sh("nmcli", "connection", "modify", con, "-ipv4.addresses", cidr)
+        sh("nmcli", "device", "reapply", dev, timeout=30)
+        if str(ip) in now:  # assigned but blocked by the network: other addresses will be blocked too
+            run["last_error"] = "The campus network does not allow a self-chosen address, so the student link uses this PC's normal address. Ask IT to reserve it (DHCP reservation)."
+            break
+    S["fixed_ip"] = None
+    save()
+    return None
 
 
 def port_free(port, host="0.0.0.0"):
@@ -129,8 +207,15 @@ def stop(remember=True):
 
 def supervise():
     """Restart anything that dies while it should be running (crash, killed, out of memory)."""
+    n = 0
     while True:
         time.sleep(5)
+        n += 1
+        if n % 60 == 0:  # every 5 minutes: cable moved, new network, address lost
+            try:
+                ensure_fixed_ip()
+            except Exception as e:  # never let the network helper stop the supervisor
+                run["last_error"] = f"Fixed address check failed: {e}"
         if not run["wanted"]:
             continue
         for name, mod in PARTS:
@@ -165,7 +250,7 @@ def admin_route():
 
 
 def base_url():
-    ip = S["bind"] if S["bind"] not in ("0.0.0.0", "127.0.0.1") else (lan_ips() or ["127.0.0.1"])[0]
+    ip = S["bind"] if S["bind"] not in ("0.0.0.0", "127.0.0.1") else (S["fixed_ip"] if S["fixed_ip"] in lan_ips() else (lan_ips() or ["127.0.0.1"])[0])
     return f"http://{ip}:{S['port']}"
 
 
@@ -277,6 +362,11 @@ def diagnose():
         blocked = "Status: active" in fw and f"{S['port']}/tcp" not in fw and str(S["port"]) not in fw
         add("Firewall", "err" if blocked else "ok", f"ufw is blocking port {S['port']}." if blocked else "Students can reach the port.",
             "Open the port." if blocked else "", "firewall" if blocked else None)
+    if S["auto_ip"]:
+        fixed = S["fixed_ip"] in ips
+        add("Fixed address", "ok" if fixed else "warn", f"The student link stays {base_url()}/ even if this PC's normal address changes." if fixed
+            else "No fixed address yet: the student link may change if the network gives this PC a new address.",
+            "" if fixed else "Press Set up. If the campus network blocks it, ask IT to reserve this PC's address.", None if fixed else "fixed_ip")
     yr = time.localtime().tm_year
     add("Clock", "ok" if 2025 <= yr <= 2100 else "err", time.strftime("%a %d %b %Y %H:%M"), "" if 2025 <= yr <= 2100 else "Fix the date and time: competition timings depend on it.")
     return out
@@ -346,7 +436,11 @@ class Panel(http.server.BaseHTTPRequestHandler):
                     S[k] = str(body[k]).strip()
             if "run_on_open" in body:
                 S["run_on_open"] = bool(body["run_on_open"])
+            if "auto_ip" in body:
+                S["auto_ip"] = bool(body["auto_ip"])
             save()
+            if S["auto_ip"] and "auto_ip" in body:
+                msg = "Fixed address: " + (ensure_fixed_ip() or "not available here, the normal address is used")
             if "port" in body and IS_ROOT:
                 firewall()
             if procs:
@@ -359,6 +453,8 @@ class Panel(http.server.BaseHTTPRequestHandler):
             msg = set_autostart(bool(body.get("on")))
         elif path == "/api/firewall":
             msg = firewall()
+        elif path == "/api/fixed_ip":
+            msg = "Fixed address: " + (ensure_fixed_ip() or "not available here, the normal address is used")
         elif path == "/api/install_langs":
             msg = install_langs()
         elif path == "/api/forget-password":
@@ -379,6 +475,9 @@ class Panel(http.server.BaseHTTPRequestHandler):
 
 def main():
     bg = "--background" in sys.argv
+    if "--fixed-ip" in sys.argv:  # used by the installer (the service is stopped meanwhile)
+        print("Fixed address:", ensure_fixed_ip() or "not set (using this PC's normal address)")
+        return
     try:
         srv = http.server.ThreadingHTTPServer(("127.0.0.1", PANEL_PORT), Panel)
     except OSError:  # already running (e.g. as the service): just show it
@@ -386,6 +485,7 @@ def main():
             webbrowser.open(f"http://127.0.0.1:{PANEL_PORT}/")
         return
     first_admin()
+    threading.Thread(target=ensure_fixed_ip, daemon=True).start()
     signal.signal(signal.SIGTERM, lambda *_: (stop(remember=False), os._exit(0)))  # systemd stop / shutdown
     threading.Thread(target=supervise, daemon=True).start()
     if S["running"] and (bg or S["run_on_open"]):

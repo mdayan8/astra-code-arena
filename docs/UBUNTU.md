@@ -66,7 +66,7 @@ The installer:
 | Network | Address (All networks is recommended), Port (default 8000), Judge workers (empty = auto) |
 | Opening hours | Days and times students can use the site. Outside them students see a "closed, opens at..." page. It never closes during a live round, and admins always have access |
 | Keep it running | Start at boot, an extra backup folder (e.g. a USB drive), Back up now, Stop and close |
-| Diagnose & fix | Runs 13 health checks. Each problem shows the fix, often as a one-click button |
+| Diagnose & fix | Runs 14 health checks. Each problem shows the fix, often as a one-click button |
 | Logs | The last lines from the web server and the judge |
 
 From a terminal you can do the same with `astra-arena open | status | start | stop | restart | logs | backup | doctor`.
@@ -119,7 +119,14 @@ Under **Results visibility**, choose live leaderboard, show at the end, or hidde
 
 **Students and the server must be on the same campus network** (LAN or Wi-Fi that can reach the server).
 
-1. **Give the server a fixed IP.** Ask the network admin to reserve its IP (a DHCP reservation for the PC's MAC address) or set a static IP in Ubuntu: Settings → Network → IPv4 → Manual. Otherwise the student link can change after a reboot.
+1. **The fixed address is automatic.** At install, at every start and every 5 minutes, the app:
+   - finds this PC's network;
+   - picks a free address near the top of it (e.g. `10.202.65.251`), checking that no other device answers to it;
+   - adds it to the network card as an extra address (the normal address from the network keeps working);
+   - checks that the network really passes traffic from it.
+
+   Then the student link always uses this address, so it stays the same after reboots or a new address from the network. If the PC moves to a different network, it picks a new address there by itself. You see it under **Links → Address**; it can be switched off under **Network**.
+   - **If the campus network blocks self-chosen addresses** (some managed switches do), the app notices, undoes it and uses the normal address. Diagnose & fix then says so. Ask IT to reserve the PC's address (a DHCP reservation for its MAC address).
 2. **Check the address.** The control panel shows it under Links. From any student PC, open `http://<server-ip>:8000/`.
 3. **Firewalls:**
    - On the server, the installer already opened port 8000. After changing the port, press **Open port in firewall**.
@@ -145,6 +152,7 @@ Run **Diagnose & fix** in the control panel (or `astra-arena doctor`) first. It 
 
 | Problem | Likely cause | Fix |
 |---|---|---|
+| Student link changed | Fixed address switched off or blocked by the network | Diagnose → Fixed address → **Set up**; if blocked, ask IT for a DHCP reservation |
 | Students cannot open the link | Different network, firewall, wrong IP | Same LAN? Open `http://<ip>:8000/api/health` on the student PC. Press **Open port in firewall**. Check the IP in the control panel |
 | "Code Arena is closed" page | Opening hours | Control panel → Opening hours: switch off or add a window |
 | "Campus network only" page | ALLOWED_NETWORKS in `/etc/astra-arena.env` does not include that subnet | Add the subnet, then `astra-arena restart` |

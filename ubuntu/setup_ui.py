@@ -20,8 +20,8 @@ INSTALL = HERE / "install.sh"
 PORT, PANEL = 8764, "http://127.0.0.1:8765/"
 TOKEN = secrets.token_urlsafe(16)
 STEPS = ["Checking this computer", "Installing compilers", "Installing Node.js", "Copying the app", "Installing Python packages",
-         "Installing the local AI model", "Creating the background service", "Keeping the computer awake", "Done"]
-job = {"state": "idle", "log": [], "step": "", "done_steps": 0, "total": 8, "error": "", "password": "", "students": ""}
+         "Installing the local AI model", "Creating the background service", "Keeping the computer awake", "Setting up a fixed network address", "Done"]
+job = {"state": "idle", "log": [], "step": "", "done_steps": 0, "total": 9, "error": "", "password": "", "students": ""}
 
 
 def panel_up():
@@ -58,7 +58,7 @@ def machine():
 
 
 def run_install(ai):
-    job.update(state="running", log=[], step="Waiting for your password...", done_steps=0, total=9 if ai else 8, error="", password="")
+    job.update(state="running", log=[], step="Waiting for your password...", done_steps=0, total=10 if ai else 9, error="", password="")
     cmd = ["pkexec", "/bin/bash", str(INSTALL)] + (["--with-ai"] if ai else [])
     if os.geteuid() == 0:
         cmd = cmd[1:]
@@ -111,7 +111,7 @@ function idle(){const label=!M.installed?'Install ASTRA Code Arena':M.up_to_date
  <p class=muted>${M.installed?'Already installed. Updating keeps every student, question and result.':'One click installs everything it needs: compilers (C, C++, Java, Python, JavaScript), the platform, the background service and the control panel. It needs internet this one time and takes about 5-15 minutes. Ubuntu will ask for your password.'}</p>
  <label><input type=checkbox id=ai ${M.ram_gb>=7?'checked':''}> Also install the AI model (Prompt challenges, AI Studio): about 2 GB download, uses about 1.5 GB RAM</label>
  <div class=row><button class=btn id=go ${M.free_gb<20?'disabled':''}>${label}</button>${M.running?'<a class="btn ghost" href="http://127.0.0.1:8765/">Open control panel</a>':''}</div>`;$('#go').onclick=go}
-function progress(j){const pct=Math.round(100*j.done_steps/j.total),list=STEPS.filter(s=>j.total===9||!s.includes('AI'));
+function progress(j){const pct=Math.round(100*j.done_steps/j.total),list=STEPS.filter(s=>j.total===10||!s.includes('AI'));
  const cur=list.findIndex(s=>j.step.startsWith(s.split(' ').slice(0,2).join(' ')));
  let h=`<div class=row style="justify-content:space-between"><b>${esc(j.step||'Starting...')}</b><span>${pct}%</span></div><div class=bar><i style="width:${Math.max(pct,3)}%"></i></div>
  <div class="muted" style="font-size:13px;height:20px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${esc(j.log.at(-1)||'')}</div>

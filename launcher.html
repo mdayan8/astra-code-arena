@@ -34,13 +34,14 @@ a{color:var(--pri)}code{background:#f0eefc;padding:2px 6px;border-radius:5px}pre
  </section>
  <section class="card"><h3>Links to share</h3><dl>
   <dt>Students</dt><dd><a id="surl" target="_blank"></a></dd>
-  <dt>Organisers (private)</dt><dd><a id="aurl" target="_blank"></a></dd></dl>
+  <dt>Address</dt><dd id="addr" class="small"></dd><dt>Organisers (private)</dt><dd><a id="aurl" target="_blank"></a></dd></dl>
   <div id="pw" style="display:none;margin-top:12px" class="alert">First admin login: user <code>admin</code>, password <code id="pwv"></code>. You must change it at first sign-in. <button class="btn" id="pwok">I saved it</button></div>
  </section>
  <section class="card"><h3>This machine</h3><dl id="mach"></dl></section>
  <section class="card"><h3>Network</h3>
   <div class="row"><label>Address <select id="bind"></select></label><label>Port <input id="port" type="number" min="1024" max="65535" style="width:90px"></label></div>
   <div class="row" style="margin-top:8px"><label>Judge workers <input id="workers" type="number" min="1" max="8" style="width:70px" placeholder="auto"></label><span class="small muted" id="wrec"></span></div>
+  <div class="row" style="margin-top:8px"><label><input type="checkbox" id="autoip"> Keep a fixed address automatically (the student link never changes)</label></div>
   <div class="row" style="margin-top:8px"><label><input type="checkbox" id="runopen"> Start the platform when this app opens</label></div>
   <div class="row" style="margin-top:10px"><button class="btn pri" id="saveNet">Save</button><button class="btn" id="fw">Open port in firewall</button></div>
   <div class="small muted" style="margin-top:6px">Students on the same LAN open the Students link. Student programs never get internet: each runs with no network.</div>
@@ -80,20 +81,20 @@ async function load(){
  $('#headline').textContent=!st.wanted?'The platform is stopped.':!st.open_now?`Running, but closed to students by opening hours${st.next_open?` · opens ${st.next_open}`:''}`:st.live.length?`Live round: ${st.live.join(', ')}`:'Running and open to students.';
  $('#sub').textContent=st.wanted?`Up ${up(st.uptime)} · ${st.signed_in_last_hour} signed in during the last hour · ${st.restarts} automatic restart${st.restarts===1?'':'s'}`:'Press Run to start. It keeps running in the background after you close this window.';
  $('#alerts').innerHTML=(st.last_error?`<div class="alert">${esc(st.last_error)}</div>`:'')+(st.wanted?st.alerts:[]).map(a=>`<div class="alert ${a.level==='err'?'err':''}">${esc(a.text)}</div>`).join('');
- $('#surl').textContent=$('#surl').href=st.student_url;$('#aurl').textContent=$('#aurl').href=st.admin_url;
+ $('#surl').textContent=$('#surl').href=st.student_url;$('#addr').textContent=S.fixed_ip&&st.ips.includes(S.fixed_ip)?`Fixed ${S.fixed_ip} (stays the same after reboots)`:`${st.ips[0]||'not connected'} (normal address from the network)`;$('#aurl').textContent=$('#aurl').href=st.admin_url;
  $('#pw').style.display=S.first_password?'block':'none';$('#pwv').textContent=S.first_password||'';
  $('#mach').innerHTML=`<dt>Processor</dt><dd>${sp.cores} cores${sp.threads>sp.cores?` (${sp.threads} threads)`:""}</dd><dt>Memory</dt><dd>${sp.ram_mb?Math.round(sp.ram_mb/1024*10)/10+' GB':'—'}</dd><dt>Free disk</dt><dd>${sp.disk_free_gb} GB</dd>
   <dt>CPU use</dt><dd>${bar(u.cpu)}</dd><dt>Memory use</dt><dd>${bar(u.ram_pct)}</dd><dt>Comfortable for</dt><dd>about ${sp.max_students} students at once (${sp.recommended_workers} judge worker${sp.recommended_workers===1?'':'s'})</dd>`;
  $('#wrec').textContent=`recommended ${sp.recommended_workers} for this machine`;
  if(!formInit){formInit=true;
   $('#bind').innerHTML=[['0.0.0.0','All networks (recommended)'],...st.ips.map(i=>[i,i]),['127.0.0.1','This computer only']].map(([v,t])=>`<option value="${v}" ${v===S.bind?'selected':''}>${t}</option>`).join('');
-  $('#port').value=S.port;$('#workers').value=S.workers||'';$('#runopen').checked=S.run_on_open;$('#mirror').value=S.backup_mirror||'';
+  $('#port').value=S.port;$('#autoip').checked=S.auto_ip;$('#workers').value=S.workers||'';$('#runopen').checked=S.run_on_open;$('#mirror').value=S.backup_mirror||'';
   $('#schOn').checked=!!st.schedule.enabled;wins=(st.schedule.windows||[]).map(w=>({...w}));drawWins()}
  $('#auto').checked=!!st.autostart;$('#auto').disabled=st.autostart===null;$('#job').style.display=st.job?'block':'none';$('#job').textContent=st.job;
 }
 $('#run').onclick=()=>post(st.wanted?'/api/stop':'/api/start');
 $('#restart').onclick=()=>post('/api/restart');
-$('#saveNet').onclick=()=>post('/api/settings',{bind:$('#bind').value,port:$('#port').value,workers:$('#workers').value,run_on_open:$('#runopen').checked});
+$('#saveNet').onclick=()=>post('/api/settings',{bind:$('#bind').value,port:$('#port').value,workers:$('#workers').value,run_on_open:$('#runopen').checked,auto_ip:$('#autoip').checked});
 $('#saveMirror').onclick=()=>post('/api/settings',{backup_mirror:$('#mirror').value});
 $('#fw').onclick=()=>post('/api/firewall');
 $('#auto').onchange=()=>post('/api/autostart',{on:$('#auto').checked});
@@ -102,7 +103,7 @@ $('#saveSch').onclick=()=>{if($('#schOn').checked&&!wins.length)return toast('Ad
 $('#backup').onclick=()=>post('/api/backup');
 $('#pwok').onclick=()=>post('/api/forget-password');
 $('#quit').onclick=()=>{if(confirm('Stop the platform and close the control panel? Students will lose access.'))post('/api/quit')};
-const ACT={start:'Run',restart:'Restart',backup:'Back up now',firewall:'Open port',install_langs:'Install'};
+const ACT={fixed_ip:'Set up',start:'Run',restart:'Restart',backup:'Back up now',firewall:'Open port',install_langs:'Install'};
 async function diag(){$('#checks').innerHTML='<div class="small muted" style="padding:10px 0">Checking...</div>';const r=await (await fetch('/api/diagnose')).json();
  $('#checks').innerHTML=r.map(c=>`<div class="chk"><span class="lv ${c.level}"></span><b>${esc(c.name)}</b><div>${esc(c.detail)}${c.fix?`<div class="small" style="color:${c.level==='err'?'var(--err)':'var(--warn)'}">Fix: ${esc(c.fix)}</div>`:''}</div>${c.action?`<button class="btn" data-act="${c.action}">${ACT[c.action]}</button>`:'<span></span>'}</div>`).join('');
  document.querySelectorAll('[data-act]').forEach(b=>b.onclick=async()=>{b.disabled=true;await post('/api/'+b.dataset.act);setTimeout(diag,b.dataset.act==='install_langs'?1000:4000)})}
