@@ -57,6 +57,8 @@ The installer:
 
 ## 4. Navigating the control panel
 
+Open **ASTRA Code Arena** from the app menu (purple hexagon icon). It opens in its own window when Chrome or Chromium is installed, otherwise in a browser tab. **Sign in with the Super Admin account**: the same username and password as the organiser site (the first password is shown at the end of the installation). Five wrong passwords lock sign-in for a minute. Forgot it? Run `astra-arena reset-password` in a terminal on that PC.
+
 | Card | What it does |
 |---|---|
 | Top bar | **Running** (green), **Starting / recovering** (amber) or **Stopped** (grey) |
@@ -66,6 +68,7 @@ The installer:
 | Network | Address (All networks is recommended), Port (default 8000), Judge workers (empty = auto) |
 | Opening hours | Days and times students can use the site. Outside them students see a "closed, opens at..." page. It never closes during a live round, and admins always have access |
 | Keep it running | Start at boot, an extra backup folder (e.g. a USB drive), Back up now, Stop and close |
+| Updates | Current version, Check now / Update now, automatic updates on or off, access token for a private repository |
 | Move to another computer | Create a move package, import one, or remove this computer as the host (section 8) |
 | Diagnose & fix | Runs 14 health checks. Each problem shows the fix, often as a one-click button |
 | Logs | The last lines from the web server and the judge |
@@ -163,7 +166,20 @@ Under **Results visibility**, choose live leaderboard, show at the end, or hidde
 
 **Manual restore:** Organiser site → **Database** → choose a backup → **Restore** (type RESTORE). A safety backup is taken first.
 
-## 8. Moving to another computer, or removing it
+## 8. Automatic updates
+
+When a new version is pushed to GitHub, every installed PC picks it up by itself:
+
+1. It checks GitHub every 30 minutes (and when you press **Check now**).
+2. It **never updates during a round, or in the hour before one starts**.
+3. It takes a verified backup of the database, downloads the new version, and installs it. Packages are reinstalled only if the list changed, and the database is upgraded automatically: students, questions and results are kept.
+4. It restarts (a few seconds) and checks that the new version is healthy. **If it does not start, the previous version is restored automatically** and that version is not tried again until a newer one is pushed.
+
+The Updates card shows the current version, the last check, and the result of the last update. Switch automatic updates off there to update only by hand (**Update now**, or `astra-arena update` in a terminal).
+
+**Private repository:** the PC needs read access. In GitHub, create a fine-grained token with read-only "Contents" access to this repository, and paste it under Updates → Access token. A public repository needs nothing.
+
+## 9. Moving to another computer, or removing it
 
 Everything moves in one file, and the new computer adapts by itself: it sizes the judge to its own CPU and RAM, and picks its own fixed address.
 
@@ -182,7 +198,7 @@ If both computers are on the same network, the new one takes over the old fixed 
 
 The same from a terminal: `astra-arena package` (create a move package) and `astra-arena remove` (uninstall). On an installed PC, the panel's **Import** button also brings in a package.
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 Run **Diagnose & fix** in the control panel (or `astra-arena doctor`) first. It finds most problems and shows the fix.
 
@@ -198,13 +214,14 @@ Run **Diagnose & fix** in the control panel (or `astra-arena doctor`) first. It 
 | "Compilation Error" for every C++ answer | Compiler missing | Diagnose → Programming languages → **Install** |
 | Prompt challenges show "Internal error" | AI model not running | `sudo systemctl restart ollama`; check that AI_* is set in `/etc/astra-arena.env` |
 | Slow verdicts with many students | Not enough judge workers | Network → Judge workers +1 (watch Memory), or close other programs |
-| Forgot the admin password | | `sudo bash -c 'set -a; . /etc/astra-arena.env; cd /opt/astra-arena && .venv/bin/python -m app.manage reset-password admin'` |
+| Update failed / "Cannot reach GitHub" | No internet, or a private repository without a token | Connect to the internet, or add the token under Updates |
+| Forgot the admin password | | `astra-arena reset-password` (prints a new temporary password) |
 | Lost the organiser link | | The control panel shows it under Links |
 | A student forgot their password | | Students use **Forgot password** (USN + name + date of birth), or Participants → reset |
 | Wrong times on competitions | Clock or timezone | Settings → Date & Time → automatic; APP_TIMEZONE in `/etc/astra-arena.env` |
 | Need to move to a new PC | | Section 8: create a move package, install the new PC with it, remove the old one |
 
-## 10. Files and commands
+## 11. Files and commands
 
 | What | Where |
 |---|---|

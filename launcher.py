@@ -34,7 +34,12 @@ LOGS.mkdir(parents=True, exist_ok=True)
 SERVICE = "astra-arena"
 IS_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
 TOKEN = secrets.token_urlsafe(16)
-DEFAULT = {"port": 8000, "bind": "0.0.0.0", "workers": None, "run_on_open": True, "running": True, "backup_mirror": "", "first_password": None, "auto_ip": True, "fixed_ip": None}
+SESSIONS, FAILS = {}, {"n": 0, "until": 0}  # panel sign-ins (in memory: a restart signs everyone out)
+UPDATE_REPO = os.environ.get("UPDATE_REPO") or "https://github.com/mdayan8/astra-code-arena.git"
+UPDATE_BRANCH = os.environ.get("UPDATE_BRANCH") or "main"
+UPD_DIR = config.DATA_DIR / "update-src"
+UPD_STATUS = config.DATA_DIR / "update-status.json"  # written by install.sh --update (result, rollback)
+DEFAULT = {"auto_update": True, "update_token": "", "port": 8000, "bind": "0.0.0.0", "workers": None, "run_on_open": True, "running": True, "backup_mirror": "", "first_password": None, "auto_ip": True, "fixed_ip": None}
 APT = {"c": "gcc", "cpp": "g++", "python": "python3", "java": "default-jdk-headless", "javascript": "nodejs", "go": "golang-go", "rust": "rustc"}
 PARTS = (("web", "app.main"), ("judge", "app.worker"))
 
@@ -49,12 +54,13 @@ def load():
 def save():
     tmp = STATE_F.with_suffix(".tmp")
     tmp.write_text(json.dumps(S, indent=1))
+    os.chmod(tmp, 0o600)  # holds the first admin password and the update token
     tmp.replace(STATE_F)  # atomic: a power cut never leaves a half-written settings file
 
 
 S = load()
 procs = {}
-run = {"wanted": False, "started_at": None, "restarts": 0, "last_error": "", "job": ""}
+run = {"wanted": False, "started_at": None, "restarts": 0, "last_error": "", "job": "", "update": {}}
 
 
 def sh(*cmd, timeout=20):
@@ -171,6 +177,84 @@ def release_fixed_ip():
     S["fixed_ip"] = None
     save()
     return ip
+
+
+# ---------- automatic updates from GitHub ----------
+def installed_version():
+    try:
+        return (ROOT / ".installed-version").read_text().strip()
+    except OSError:
+        return ""
+
+
+def git(*args, timeout=120):
+    """git with the optional access token for a private repo (sent as a header, never written to disk)."""
+    extra = []
+    if S.get("update_token"):
+        import base64
+        cred = base64.b64encode(f"x-access-token:{S['update_token']}".encode()).decode()
+        extra = ["-c", f"http.extraHeader=Authorization: Basic {cred}"]
+    return sh("git", *extra, *args, timeout=timeout)
+
+
+def update_safe_now():
+    """Never update during a round, or within 60 minutes of one starting."""
+    c = db.connect()
+    try:
+        busy = db.one(c, "SELECT title FROM competitions WHERE status IN ('live','paused') OR (status='published' AND start_at BETWEEN ? AND ?) LIMIT 1",
+                      db.now() - 600, db.now() + 3600)
+    finally:
+        c.close()
+    return (False, f"waiting: '{busy['title']}' is running or starts soon") if busy else (True, "")
+
+
+def check_update(apply=False):
+    st = {"checked_at": int(time.time()), "installed": installed_version()[:12]}
+    if not shutil.which("git"):
+        return {**st, "error": "git is not installed"}
+    code, out = git("ls-remote", UPDATE_REPO, f"refs/heads/{UPDATE_BRANCH}", timeout=40)
+    if code or not out.strip():
+        st["error"] = "Cannot reach GitHub (no internet, or a private repository needs an access token)."
+        run["update"] = st
+        return st
+    remote = out.split()[0]
+    st.update(latest=remote[:12], available=remote != installed_version())
+    try:
+        st["last_result"] = json.loads(UPD_STATUS.read_text())
+    except (OSError, ValueError):
+        pass
+    bad = st.get("last_result", {})
+    if apply and st["available"] and bad.get("ok") is False and bad.get("version") == remote:
+        st["note"] = f"Version {remote[:12]} failed to start earlier and was rolled back; waiting for a newer version."
+    elif apply and st["available"]:
+        ok, why = update_safe_now()
+        st["note"] = why or apply_update(remote)
+    run["update"] = st
+    return st
+
+
+def apply_update(remote):
+    if not IS_ROOT:
+        return "Updates install only when ASTRA Arena runs as the installed service."
+    if UPD_DIR.joinpath(".git").exists():
+        code, out = git("-C", str(UPD_DIR), "fetch", "--depth", "1", UPDATE_REPO, UPDATE_BRANCH)
+        code = code or git("-C", str(UPD_DIR), "reset", "--hard", "FETCH_HEAD")[0]
+    else:
+        shutil.rmtree(UPD_DIR, ignore_errors=True)
+        code, out = git("clone", "--depth", "1", "-b", UPDATE_BRANCH, UPDATE_REPO, str(UPD_DIR), timeout=600)
+    if code:
+        return "Download failed: " + out[-200:]
+    if sh("git", "-C", str(UPD_DIR), "rev-parse", "HEAD")[1].strip() != remote:
+        return "Downloaded version does not match GitHub yet; trying again later."
+    from app.worker import backup
+    c = db.connect()
+    try:
+        backup(c, "pre-update")  # a verified copy of the data before anything changes
+    finally:
+        c.close()
+    # runs outside this service: the update restarts the service (and this process)
+    sh("systemd-run", "--unit", f"astra-update-{int(time.time())}", "--collect", "/bin/bash", str(UPD_DIR / "ubuntu" / "install.sh"), "--update")
+    return "Installing the update now (the platform restarts for a few seconds)."
 
 
 # ---------- moving to another computer ----------
@@ -314,6 +398,11 @@ def supervise():
     while True:
         time.sleep(5)
         n += 1
+        if n % 360 == 24 and S["auto_update"]:  # 2 min after start, then every 30 min
+            try:
+                check_update(apply=True)
+            except Exception as e:
+                run["update"] = {"checked_at": int(time.time()), "error": f"Update check failed: {e}"}
         if n % 60 == 0:  # every 5 minutes: cable moved, new network, address lost
             try:
                 ensure_fixed_ip()
@@ -370,10 +459,11 @@ def status():
     open_, nxt = hostinfo.schedule_state(sched)
     up = {n: p.poll() is None for n, p in procs.items()}
     return {"running": bool(procs) and all(up.values()), "wanted": run["wanted"], "uptime": int(time.time() - run["started_at"]) if run["started_at"] else 0,
-            "restarts": run["restarts"], "last_error": run["last_error"], "job": run["job"], "settings": S, "specs": hostinfo.specs(), "usage": hostinfo.usage(),
+            "restarts": run["restarts"], "last_error": run["last_error"], "job": run["job"], "settings": {k: v for k, v in S.items() if k != "update_token"}, "specs": hostinfo.specs(), "usage": hostinfo.usage(),
             "ips": lan_ips(), "student_url": base_url() + "/", "admin_url": f"{base_url()}/{admin_route()}/",
             "schedule": sched, "open_now": open_ or bool(live), "next_open": nxt.strftime("%a %d %b %I:%M %p") if nxt else None,
-            "live": [x["title"] for x in live], "signed_in_last_hour": online, "alerts": sysst["alerts"], "autostart": autostart_on(), "is_root": IS_ROOT}
+            "live": [x["title"] for x in live], "signed_in_last_hour": online, "alerts": sysst["alerts"], "autostart": autostart_on(), "is_root": IS_ROOT,
+            "update": {**run["update"], "auto": S["auto_update"], "token_set": bool(S.get("update_token")), "version": installed_version()[:12]}}
 
 
 # ---------- system integration (Ubuntu) ----------
@@ -476,7 +566,51 @@ def diagnose():
 
 
 # ---------- panel ----------
+LOGIN_PAGE = """<!doctype html><html><head><meta charset=utf-8><title>ASTRA Code Arena · Sign in</title><link rel=icon href=/img/arena-logo.svg>
+<style>body{margin:0;font:15px/1.5 system-ui,Ubuntu,sans-serif;background:radial-gradient(circle at 30% 10%,#efeaff,#f6f6fa 60%);color:#16161d;display:grid;place-items:center;min-height:100vh}
+form{background:#fff;border:1px solid #e4e4ee;border-radius:18px;padding:34px;width:360px;box-shadow:0 20px 50px #2a1a6a14;text-align:center}img{width:64px}h1{font-size:20px;margin:12px 0 2px}
+p{color:#666a78;margin:0 0 20px;font-size:13.5px}input{width:100%;box-sizing:border-box;font:inherit;padding:11px 12px;border:1px solid #dcdbe8;border-radius:10px;margin-bottom:10px}
+input:focus{outline:2px solid #6d4aff33;border-color:#6d4aff}button{width:100%;border:0;border-radius:10px;padding:12px;font:inherit;font-weight:600;background:#6d4aff;color:#fff;cursor:pointer}
+#e{color:#c0283a;font-size:13px;min-height:20px;margin-top:10px}small{display:block;color:#9a9db0;margin-top:14px;font-size:12px}</style></head><body>
+<form id=f><img src=/img/arena-logo.svg alt=""><h1>ASTRA Code Arena</h1><p>Control panel · sign in with the Super Admin account</p>
+<input name=u placeholder=Username value=admin autocomplete=username required><input name=p type=password placeholder=Password autocomplete=current-password required autofocus>
+<button>Sign in</button><div id=e></div><small>Forgot it? In a terminal on this computer: astra-arena reset-password</small></form>
+<script>f.onsubmit=async e=>{e.preventDefault();const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:f.u.value,password:f.p.value})});
+if(r.ok)return location.reload();document.getElementById('e').textContent=(await r.json()).error||'Sign-in failed'}</script></body></html>"""
+
+
+def panel_login(username, password):
+    """Same account as the organiser site: Super Admins only. 5 wrong tries lock sign-in for a minute."""
+    if time.time() < FAILS["until"]:
+        return None, f"Too many wrong passwords. Try again in {int(FAILS['until'] - time.time()) + 1} s."
+    from app.security import verify_password
+    c = db.connect()
+    try:
+        u = db.one(c, "SELECT password_hash FROM users WHERE username=? AND kind='admin' AND role='super_admin' AND status='active'", (username or "").strip())
+    finally:
+        c.close()
+    if u and verify_password(password or "", u["password_hash"]):
+        FAILS.update(n=0, until=0)
+        sid = secrets.token_urlsafe(24)
+        SESSIONS[sid] = time.time() + 12 * 3600
+        return sid, None
+    FAILS["n"] += 1
+    if FAILS["n"] >= 5:
+        FAILS.update(n=0, until=time.time() + 60)
+    return None, "Wrong username or password (Super Admin account)."
+
+
 class Panel(http.server.BaseHTTPRequestHandler):
+    def authed(self):
+        if self.headers.get("X-Token") == TOKEN:  # local tools (astra-arena doctor) read the token from a root-only file
+            return True
+        sid = next((x.split("=", 1)[1] for x in self.headers.get("Cookie", "").split("; ") if x.startswith("astra_panel=")), "")
+        return SESSIONS.get(sid, 0) > time.time()
+
+    def same_origin(self):
+        o = self.headers.get("Origin")
+        return self.headers.get("Host", "").split(":")[0] in ("127.0.0.1", "localhost") and (not o or o in (f"http://127.0.0.1:{PANEL_PORT}", f"http://localhost:{PANEL_PORT}"))
+
     def log_message(self, *a):
         pass
 
@@ -492,6 +626,13 @@ class Panel(http.server.BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if self.headers.get("Host", "").split(":")[0] not in ("127.0.0.1", "localhost"):  # blocks DNS-rebinding tricks
             return self.send(403, "{}")
+        if path == "/api/ping":
+            return self.send(200, json.dumps({"ok": True, "version": installed_version()}))
+        if path.startswith("/img/"):
+            f = ROOT / "static" / "img" / Path(path).name
+            return self.send(200, f.read_bytes(), "image/svg+xml" if f.suffix == ".svg" else "image/png") if f.is_file() else self.send(404, "{}")
+        if not self.authed():
+            return self.send(200, LOGIN_PAGE, "text/html; charset=utf-8") if path == "/" else self.send(401, '{"error":"Sign in first."}')
         if path == "/":
             return self.send(200, (ROOT / "launcher.html").read_text().replace("__TOKEN__", TOKEN), "text/html; charset=utf-8")
         if path == "/api/status":
@@ -522,8 +663,22 @@ class Panel(http.server.BaseHTTPRequestHandler):
         self.send(404, "{}")
 
     def do_POST(self):
-        if self.headers.get("X-Token") != TOKEN:  # other web pages cannot drive the panel
+        if not self.same_origin():  # other web pages cannot drive the panel
             return self.send(403, '{"error":"forbidden"}')
+        if urlparse(self.path).path == "/api/login":
+            if "application/json" not in self.headers.get("Content-Type", ""):
+                return self.send(400, "{}")
+            b = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 4096)) or b"{}")
+            sid, err = panel_login(b.get("username"), b.get("password"))
+            if not sid:
+                return self.send(401, json.dumps({"error": err}))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Set-Cookie", f"astra_panel={sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200")
+            self.end_headers()
+            return self.wfile.write(b'{"ok":true}')
+        if not self.authed() or self.headers.get("X-Token") != TOKEN:
+            return self.send(401, '{"error":"Sign in first."}')
         path, msg = urlparse(self.path).path, "ok"
         if path == "/api/import":  # raw zip upload from the panel
             f = config.DATA_DIR / "upload-import.zip"
@@ -596,6 +751,16 @@ class Panel(http.server.BaseHTTPRequestHandler):
             if body.get("confirm") != "REMOVE":
                 return self.send(400, '{"error":"Type REMOVE to confirm."}')
             msg = remove_host(bool(body.get("purge")))
+        elif path == "/api/update":
+            if "auto" in body:
+                S["auto_update"] = bool(body["auto"])
+            if "token" in body:
+                S["update_token"] = str(body["token"]).strip()
+            save()
+            st = check_update(apply=bool(body.get("apply")))
+            msg = st.get("error") or st.get("note") or ("An update is available." if st.get("available") else "You have the latest version.")
+        elif path == "/api/logout":
+            SESSIONS.clear()
         elif path == "/api/fixed_ip":
             msg = "Fixed address: " + (ensure_fixed_ip() or "not available here, the normal address is used")
         elif path == "/api/install_langs":
@@ -635,6 +800,9 @@ def main():
             webbrowser.open(f"http://127.0.0.1:{PANEL_PORT}/")
         return
     first_admin()
+    tf = config.DATA_DIR / "panel.token"
+    tf.write_text(TOKEN)
+    os.chmod(tf, 0o600)  # lets `sudo astra-arena doctor` talk to the panel
     threading.Thread(target=ensure_fixed_ip, daemon=True).start()
     signal.signal(signal.SIGTERM, lambda *_: (stop(remember=False), os._exit(0)))  # systemd stop / shutdown
     threading.Thread(target=supervise, daemon=True).start()

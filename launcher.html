@@ -24,7 +24,7 @@ a{color:var(--pri)}code{background:#f0eefc;padding:2px 6px;border-radius:5px}pre
 .prose{padding:22px 28px;max-width:none}.prose h1{font-size:22px}.prose h2{font-size:17px;margin-top:26px;border-bottom:1px solid var(--line);padding-bottom:4px}.prose h3{font-size:15px;margin-top:16px}.prose table{border-collapse:collapse;width:100%;margin:8px 0}.prose td,.prose th{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}.prose th{background:#f3f2fa}.prose pre{background:#f3f2fa;color:var(--text)}
 #msg{position:fixed;bottom:18px;right:18px;background:#16161d;color:#fff;padding:10px 14px;border-radius:8px;display:none}
 </style></head><body><main>
-<div class="top"><img src="/img/arena-logo.svg" alt=""><div><h1>ASTRA Code Arena</h1><div class="small muted">Control panel · only on this computer</div></div><span class="sp"></span><div class="tabs"><button class="tab on" data-tab="ctl">Control</button><button class="tab" data-tab="guide">Guide &amp; help</button></div><span id="state"></span></div>
+<div class="top"><img src="/img/arena-logo.svg" alt=""><div><h1>ASTRA Code Arena</h1><div class="small muted">Control panel · only on this computer</div></div><span class="sp"></span><div class="tabs"><button class="tab on" data-tab="ctl">Control</button><button class="tab" data-tab="guide">Guide &amp; help</button></div><span id="state"></span><button class="btn" id="logout" style="margin-left:8px">Sign out</button></div>
 <div id="guide" class="card prose" style="display:none"></div><div id="ctl">
 <div id="alerts"></div>
 <div class="grid">
@@ -57,6 +57,12 @@ a{color:var(--pri)}code{background:#f0eefc;padding:2px 6px;border-radius:5px}pre
   <div class="row" style="margin-top:10px"><button class="btn" id="backup">Back up now</button><button class="btn red" id="quit">Stop and close</button></div>
   <div class="small muted" style="margin-top:6px">Backups: hourly during a live round, every 6 hours otherwise, 30 kept. If the database is ever damaged it is restored from the newest good backup automatically.</div>
  </section>
+ <section class="card wide"><div class="row" style="justify-content:space-between"><div><h3 style="margin:0">Updates</h3><div class="small muted" id="updInfo">Checking...</div></div>
+  <div class="row"><button class="btn" id="updCheck">Check now</button><button class="btn pri" id="updApply" style="display:none">Update now</button></div></div>
+  <div class="row" style="margin-top:10px"><label><input type="checkbox" id="updAuto"> Update automatically (checks GitHub every 30 minutes; never during a round or in the hour before one)</label></div>
+  <div class="row small" style="margin-top:8px"><label>Access token (only for a private GitHub repository) <input type="password" id="updTok" placeholder="github_pat_..." style="width:260px"></label><button class="btn" id="updTokSave">Save</button></div>
+  <div class="small muted" style="margin-top:6px">Every update takes a verified backup first, keeps all data, and if the new version does not start, the previous version is restored automatically.</div>
+ </section>
  <section class="card wide"><h3>Move to another computer</h3>
   <ol class="small" style="margin:0 0 12px;padding-left:18px;line-height:1.7">
    <li><b>Create a move package</b> here and save it (Downloads or a USB drive). It holds every competition, question, student, result and upload.</li>
@@ -84,7 +90,7 @@ function drawWins(){$('#wins').innerHTML=wins.map((w,i)=>`<div class="row" style
  document.querySelectorAll('[data-e]').forEach(x=>x.onchange=()=>wins[x.dataset.e].end=x.value);
  document.querySelectorAll('[data-x]').forEach(x=>x.onclick=()=>{wins.splice(+x.dataset.x,1);drawWins()})}
 async function load(){
- st=await (await fetch('/api/status')).json();const S=st.settings,sp=st.specs,u=st.usage;
+ const rs=await fetch('/api/status');if(rs.status===401)return location.reload();st=await rs.json();const S=st.settings,sp=st.specs,u=st.usage;
  $('#state').innerHTML=st.running?`<span class="pill on"><span class="dot"></span>Running</span>`:st.wanted?`<span class="pill warn"><span class="dot"></span>Starting / recovering</span>`:`<span class="pill off"><span class="dot"></span>Stopped</span>`;
  $('#run').textContent=st.wanted?'Stop':'Run';$('#run').classList.toggle('pri',!st.wanted);
  $('#headline').textContent=!st.wanted?'The platform is stopped.':!st.open_now?`Running, but closed to students by opening hours${st.next_open?` · opens ${st.next_open}`:''}`:st.live.length?`Live round: ${st.live.join(', ')}`:'Running and open to students.';
@@ -99,7 +105,7 @@ async function load(){
   $('#bind').innerHTML=[['0.0.0.0','All networks (recommended)'],...st.ips.map(i=>[i,i]),['127.0.0.1','This computer only']].map(([v,t])=>`<option value="${v}" ${v===S.bind?'selected':''}>${t}</option>`).join('');
   $('#port').value=S.port;$('#autoip').checked=S.auto_ip;$('#workers').value=S.workers||'';$('#runopen').checked=S.run_on_open;$('#mirror').value=S.backup_mirror||'';
   $('#schOn').checked=!!st.schedule.enabled;wins=(st.schedule.windows||[]).map(w=>({...w}));drawWins()}
- $('#auto').checked=!!st.autostart;$('#auto').disabled=st.autostart===null;$('#job').style.display=st.job?'block':'none';$('#job').textContent=st.job;
+ $('#auto').checked=!!st.autostart;$('#auto').disabled=st.autostart===null;$('#job').style.display=st.job?'block':'none';drawUpd(st.update||{});$('#job').textContent=st.job;
 }
 $('#run').onclick=()=>post(st.wanted?'/api/stop':'/api/start');
 $('#restart').onclick=()=>post('/api/restart');
@@ -117,6 +123,15 @@ async function diag(){$('#checks').innerHTML='<div class="small muted" style="pa
  $('#checks').innerHTML=r.map(c=>`<div class="chk"><span class="lv ${c.level}"></span><b>${esc(c.name)}</b><div>${esc(c.detail)}${c.fix?`<div class="small" style="color:${c.level==='err'?'var(--err)':'var(--warn)'}">Fix: ${esc(c.fix)}</div>`:''}</div>${c.action?`<button class="btn" data-act="${c.action}">${ACT[c.action]}</button>`:'<span></span>'}</div>`).join('');
  document.querySelectorAll('[data-act]').forEach(b=>b.onclick=async()=>{b.disabled=true;await post('/api/'+b.dataset.act);setTimeout(diag,b.dataset.act==='install_langs'?1000:4000)})}
 $('#diag').onclick=diag;
+const ago=t=>{const m=Math.round((Date.now()/1000-t)/60);return m<1?'just now':m<60?m+' min ago':Math.round(m/60)+' h ago'};
+function drawUpd(u){$('#updAuto').checked=!!u.auto;$('#updTok').placeholder=u.token_set?'saved (hidden)':'github_pat_...';
+ const lr=u.last_result;$('#updInfo').innerHTML=`Version <code>${esc(u.version||'unknown')}</code>${u.checked_at?` · checked ${ago(u.checked_at)}`:''}${u.error?` · <span style="color:var(--err)">${esc(u.error)}</span>`:u.available?` · <b>new version ${esc(u.latest)} available</b>`:u.checked_at?' · up to date':''}${u.note?` · ${esc(u.note)}`:''}${lr?`<br>Last update: ${esc(lr.message)} (${ago(lr.at)})`:''}`;
+ $('#updApply').style.display=u.available?'':'none'}
+$('#updCheck').onclick=()=>post('/api/update',{});
+$('#updApply').onclick=()=>{if(confirm('Install the new version now? A backup is taken first and the platform restarts for a few seconds.'))post('/api/update',{apply:true})};
+$('#updAuto').onchange=()=>post('/api/update',{auto:$('#updAuto').checked});
+$('#updTokSave').onclick=()=>post('/api/update',{token:$('#updTok').value}).then(()=>$('#updTok').value='');
+$('#logout').onclick=async()=>{await fetch('/api/logout',{method:'POST',headers:{'X-Token':T}});location.reload()};
 $('#mkpkg').onclick=async()=>{$('#mkpkg').disabled=true;$('#pkglink').textContent='Creating...';const r=await (await fetch('/api/package',{method:'POST',headers:{'X-Token':T}})).json();$('#mkpkg').disabled=false;
  $('#pkglink').innerHTML=r.url?`Ready: <a href="${r.url}" download>Download ${esc(r.name)}</a> · save it to a USB drive or the new computer`:esc(r.error||'Failed')};
 $('#impBtn').onclick=async()=>{const f=$('#impf').files[0];if(!f)return toast('Choose a move package first');if(!confirm('Replace ALL data on this computer with the data in this package? The current data is backed up first.'))return;
