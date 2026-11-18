@@ -23,18 +23,15 @@ Everything runs offline on the LAN. Nothing loads from the internet (the editor 
 | Frontend | Plain HTML/CSS/JS + Monaco | No build step, no CDN, ~150 KB of app code. |
 | Judge | Linux rlimits + per-job uid + Docker (`network_mode: none`, read-only) | No external judge service needed. |
 
-## Quick start (college server)
+## Quick start (Ubuntu PC, no Docker needed)
 
-Copy this folder to the server (Ubuntu/Debian), then run one command:
+1. Download this repo (Code → Download ZIP, extract it) or `git clone` it.
+2. In the folder, right-click `start.sh` → **Run as a Program** (or run `bash start.sh` in a terminal).
+3. Press **Install** in the setup window and enter your Ubuntu password. A progress bar shows every step. When it finishes you get the admin password, the student link and the control panel.
 
-```bash
-./deploy.sh              # installs Docker if needed, asks for the port, builds, starts, creates the first Super Admin
-./deploy.sh --with-ai    # same, plus a small local AI model for the question assistant
-./deploy.sh --bundle     # (machine with internet) build an offline installer;  then on the server: ./deploy.sh --offline
-```
+After that it runs in the background, starts at every boot, and opens from the app menu as **ASTRA Code Arena**. Full guide: [docs/UBUNTU.md](docs/UBUNTU.md) (also inside the app under Guide & help).
 
-It prints two addresses: the student portal `http://<server-ip>:<port>/` and the private organiser route. Never link the organiser route anywhere.
-Run `./deploy.sh` again after copying in a new version: it backs up the database first, then updates.
+The Docker route (`./deploy.sh`) still works for servers that already use Docker.
 
 Full instructions: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) (LAN and Wi-Fi checklist for the IT team included).
 

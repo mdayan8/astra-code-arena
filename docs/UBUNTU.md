@@ -36,15 +36,15 @@ The control panel's **This machine** card measures the PC and says how many stud
 
 ## 3. Install (once, about 10 minutes)
 
-1. Copy the `astra-code-arena` folder to the PC (USB drive or `git clone`).
-2. Open a terminal in that folder and run:
+1. Get the code onto the PC: download the ZIP from GitHub (Code → Download ZIP) and extract it, or `git clone` the repository.
+2. Open the folder and start the setup app: **right-click `start.sh` → Run as a Program** (or in a terminal: `./start.sh`).
+3. The setup window shows this PC's cores, RAM, free disk and how many students it can handle. Tick the AI model if you want Prompt challenges, then press **Install ASTRA Code Arena**.
+4. Enter your Ubuntu password when asked. A progress bar shows every step: checking the computer, compilers, Node.js, copying the app, Python packages, (AI model), background service, keep awake, done.
+5. At the end it shows the **first admin password** and the student link, plus an **Open control panel** button. Write the password down: you must change it at first sign-in.
 
-```
-sudo ./ubuntu/install.sh
-```
+Run `start.sh` again any time. If everything is installed and current it opens the control panel. If the folder has a newer version it offers **Update** (all data is kept). If something broke it offers **Repair / reinstall**.
 
-3. At the end it prints the **Students** link and the **first admin password**. Write the password down: you must change it at first sign-in.
-4. Optional: to enable **Prompt challenges** and **AI Studio**, run `sudo ./ubuntu/install.sh --with-ai` instead. This downloads a small AI model (about 1 GB) and needs about 1.5 GB more RAM.
+Without a desktop (Ubuntu Server), run `sudo ./ubuntu/install.sh` (add `--with-ai` for the AI model) instead.
 
 The installer:
 - installs C, C++, Java, JavaScript and Python;
@@ -53,7 +53,7 @@ The installer:
 - opens port 8000 in the firewall;
 - stops the PC from sleeping (a sleeping PC disconnects every student).
 
-**To update later:** copy the new folder over and run `sudo ./ubuntu/install.sh` again. Your data, students and results are kept.
+**To update later:** `git pull` (or download the new ZIP) and run `start.sh` again, then press **Update**. Your data, students and results are kept.
 
 ## 4. Navigating the control panel
 
