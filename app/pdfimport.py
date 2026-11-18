@@ -288,7 +288,7 @@ def expand_zip(path: Path, workdir: Path):
 
 
 def extract_text(path: Path):
-    import fitz
+    import pymupdf as fitz
     warnings, pages = [], []
     doc = fitz.open(path)
     if doc.needs_pass:

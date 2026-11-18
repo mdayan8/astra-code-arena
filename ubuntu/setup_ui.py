@@ -22,7 +22,7 @@ TOKEN = secrets.token_urlsafe(16)
 STEPS = ["Checking this computer", "Installing compilers", "Installing Node.js", "Copying the app", "Installing Python packages",
          "Installing the local AI model", "Bringing in data from the old computer", "Creating the background service", "Keeping the computer awake", "Setting up a fixed network address", "Done"]
 UPLOAD = Path(f"/tmp/astra-move-upload-{os.getuid()}.zip")
-job = {"state": "idle", "ai": False, "imp": False, "log": [], "step": "", "done_steps": 0, "total": 9, "error": "", "password": "", "students": ""}
+job = {"state": "idle", "ai": False, "imp": False, "log": [], "step": "", "done_steps": 0, "total": 9, "error": "", "password": "", "students": "", "notes": []}
 
 
 def panel_up():
@@ -59,7 +59,7 @@ def machine():
 
 
 def run_install(ai, imp):
-    job.update(state="running", ai=ai, imp=imp, log=[], step="Waiting for your password...", done_steps=0, total=9 + ai + imp, error="", password="")
+    job.update(state="running", ai=ai, imp=imp, log=[], step="Waiting for your password...", done_steps=0, total=9 + ai + imp, error="", password="", notes=[])
     cmd = ["pkexec", "/bin/bash", str(INSTALL)] + (["--with-ai"] if ai else []) + (["--import", str(UPLOAD)] if imp else [])
     if os.geteuid() == 0:
         cmd = cmd[1:]
@@ -79,6 +79,8 @@ def run_install(ai, imp):
                 job["step"] = line[4:]
             elif line.startswith("##FAILED"):
                 job["error"] = line[len("##FAILED"):].lstrip(": ").strip()
+            elif line.startswith("NOTE: "):
+                job["notes"] = job["notes"] + [line[6:]]
             elif "First admin login:" in line:
                 job["password"] = line.split("admin /")[-1].split("(")[0].strip()
             elif line.strip().startswith("Students:"):
@@ -120,7 +122,7 @@ function progress(j){const pct=Math.round(100*j.done_steps/j.total),list=STEPS.f
  let h=`<div class=row style="justify-content:space-between"><b>${esc(j.step||'Starting...')}</b><span>${pct}%</span></div><div class=bar><i style="width:${Math.max(pct,3)}%"></i></div>
  <div class="muted" style="font-size:13px;height:20px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${esc(j.log.at(-1)||'')}</div>
  <ul class=steps>${list.map((s,i)=>`<li class="${j.state==='done'||i<cur?'done':i===cur?'now':''}">${j.state==='done'||i<cur?'&#10003;':i===cur?'&#9654;':'&#9675;'} ${s}</li>`).join('')}</ul>`;
- if(j.state==='done')h+=`<div class=ok><b>Installed and running.</b> It starts by itself after every reboot.${j.imp?'<br>All data from the old computer is here. Sign in with the same admin accounts as before.':''}${j.password?`<br>First admin login: user <code>admin</code>, password <code>${esc(j.password)}</code>. Write it down: you must change it at first sign-in.`:''}${j.students?`<br>Students open: <code>${esc(j.students)}</code>`:''}</div><p><a class=btn href="http://127.0.0.1:8765/">Open control panel</a></p><p class=muted>Next time, open <b>ASTRA Code Arena</b> from the Ubuntu app menu.</p>`;
+ if(j.state==='done')h+=`<div class=ok><b>Installed and running.</b> It starts by itself after every reboot.${j.imp?'<br>All data from the old computer is here. Sign in with the same admin accounts as before.':''}${j.password?`<br>First admin login: user <code>admin</code>, password <code>${esc(j.password)}</code>. Write it down: you must change it at first sign-in.`:''}${j.students?`<br>Students open: <code>${esc(j.students)}</code>`:''}</div>${(j.notes||[]).length?`<div class=cap style="margin-top:10px"><b>The platform works. ${j.notes.length} part(s) can be finished later</b> by running this setup again:<ul style="margin:6px 0 0;padding-left:18px">${j.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ul></div>`:''}<p><a class=btn href="http://127.0.0.1:8765/">Open control panel</a></p><p class=muted>Next time, open <b>ASTRA Code Arena</b> from the Ubuntu app menu.</p>`;
  if(j.state==='failed')h+=`<div class=err><b>Setup stopped.</b> ${esc(j.error)}</div><p class=row><button class=btn id=go>Try again</button></p>`;
  h+=`<p><a href="#" id=det>${open?'Hide':'Show'} details</a></p><pre id=log style="display:${open?'block':'none'}">${esc(j.log.join('\n'))}</pre>`;
  $('#view').innerHTML=h;if($('#go'))$('#go').onclick=()=>{M.installed=true;idle()};$('#det').onclick=e=>{e.preventDefault();open=!open;progress(j)};if(open)$('#log').scrollTop=1e9}
