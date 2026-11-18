@@ -111,6 +111,22 @@ Create one competition per year group (for example "1st year: Basics", "3rd year
 
 For **Fix the bug** and **Complete the code**, paste the starter code per language in the question editor. For a **Prompt challenge**, the reference solution is a prompt that you know works; validate it like any other question.
 
+### Exam lockdown (per competition)
+
+Competitions → edit → **Exam lockdown**. Each round can have different rules:
+
+| Setting | Choices |
+|---|---|
+| Internet | **Detect and report** (default) · **Block**: the test is hidden while the PC can reach the internet · **Allowed** for online, research or prompt rounds |
+| Full screen | **Required**: the test is hidden outside full screen, and leaving full screen is a warning · Not required |
+| Leaving the test (other tab or app) | **Hide the test and give a warning** · Allowed, only recorded |
+| Auto-submit after warnings | 0 = never; e.g. 3 = the test is submitted automatically at the 3rd warning |
+| Copy / paste | Paste policy (allow, record, block outside pastes), plus **Block copying** and **Block all pasting** |
+
+Students see these rules on the round page before they start. Warnings are counted on the server. If a student is auto-submitted by mistake, open **Participants → their activity → Reopen test**: their screen opens again and the warning count starts from zero.
+
+A web page cannot turn off a PC's internet. **Block** hides the test whenever the PC can reach the internet, so it only works when the lab network has no internet during the round (ask IT for a firewall rule for the exam). Run a round on **Detect** first: the Fair-play tab shows how many PCs could reach the internet.
+
 ### Results
 
 Under **Results visibility**, choose live leaderboard, show at the end, or hidden until you publish. After the round, check the submissions, then **Publish results**. Students then see celebrations, badges and their rank.

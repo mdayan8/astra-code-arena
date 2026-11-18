@@ -299,6 +299,7 @@ class CompIn(BaseModel):
     allow_late_join: bool = False
     auto_start: bool = False
     paste_policy: str = Field(default="log", pattern="^(allow|log|block_external)$")
+    lockdown: dict = {}
 
 
 def comp_values(b: CompIn):
@@ -321,7 +322,7 @@ def comp_values(b: CompIn):
             "registration_mode": b.registration_mode, "reg_start": rs, "reg_end": re_, "start_at": st, "duration_min": b.duration_min,
             "languages": json.dumps(langs), "max_marks": b.max_marks, "scoring": json.dumps(sc), "leaderboard_visibility": b.leaderboard_visibility,
             "show_test_counts": int(b.show_test_counts), "allow_late_join": int(b.allow_late_join), "auto_start": int(b.auto_start),
-            "paste_policy": b.paste_policy}
+            "paste_policy": b.paste_policy, "lockdown": json.dumps(contest.lockdown_cfg(b.lockdown))}
 
 
 def comp_full(c, comp):
@@ -329,6 +330,7 @@ def comp_full(c, comp):
     for k in ("languages", "eligible_years", "eligible_departments"):
         d[k] = db.jl(comp[k])
     d["scoring"] = contest.scoring_cfg(comp)
+    d["lockdown"] = contest.lockdown_cfg(comp["lockdown"])
     d["display_status"] = contest.display_status(comp)
     d["end_at"] = contest.end_time(comp)
     d["remaining_sec"] = contest.remaining(comp) if comp["status"] in ("live", "paused") else None
@@ -750,7 +752,21 @@ def activity(cid: int, uid: int, u=Depends(admin), c=Depends(conn)):
         e["detail"] = db.jl(e["detail"], {}) if e["detail"] else None
     subs = db.all_(c, "SELECT id, question_id, language, verdict, score, created_at, code FROM submissions WHERE competition_id=? AND user_id=? AND kind='submit' ORDER BY id", cid, uid)
     person = db.one(c, "SELECT us.name, us.last_login_ip, s.* FROM users us LEFT JOIN students s ON s.user_id=us.id WHERE us.id=?", uid)
-    return {"person": person, "events": events, "submissions": subs}
+    fin = db.one(c, "SELECT finished_at FROM participant_finish WHERE competition_id=? AND user_id=?", cid, uid)
+    return {"person": person, "events": events, "submissions": subs, "finished_at": fin["finished_at"] if fin else None}
+
+
+@router.post("/competitions/{cid}/participants/{uid}/reopen")
+def reopen_test(cid: int, uid: int, req: Request, u=Depends(admin), c=Depends(conn)):
+    """Let a student continue after they finished or were auto-submitted for fair-play warnings (their warning count restarts)."""
+    comp = comp_or_404(c, cid, u)
+    if comp["status"] not in ("live", "paused"):
+        raise HTTPException(409, "Only possible while the competition is running.")
+    c.execute("DELETE FROM participant_finish WHERE competition_id=? AND user_id=?", (cid, uid))
+    c.execute("INSERT INTO activity_events(competition_id,user_id,type,detail,ip,created_at) VALUES(?,?,'reopened',?,?,?)",
+              (cid, uid, json.dumps({"by": u["username"]}), client_ip(req), db.now()))
+    audit(c, u, "competition.reopen_participant", "user", uid, cid, ip=client_ip(req))
+    return {"ok": True}
 
 
 def _norm_code(code):

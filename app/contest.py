@@ -12,6 +12,25 @@ DEFAULT_SCORING = {
 }
 
 
+DEFAULT_LOCKDOWN = {"internet": "flag", "fullscreen": "required", "leave": "warn", "max_violations": 0, "no_copy": False, "no_paste": False}
+_LD_CHOICES = {"internet": ("flag", "block", "allow"), "fullscreen": ("required", "off"), "leave": ("warn", "allow")}
+
+
+def lockdown_cfg(raw):
+    """Exam lockdown rules for a competition (stored JSON or a dict from the admin form), always complete and valid."""
+    d = db.jl(raw, {}) if isinstance(raw, str) else (raw or {})
+    cfg = dict(DEFAULT_LOCKDOWN)
+    for k, ok in _LD_CHOICES.items():
+        if d.get(k) in ok:
+            cfg[k] = d[k]
+    try:
+        cfg["max_violations"] = max(0, min(50, int(d.get("max_violations") or 0)))
+    except (TypeError, ValueError):
+        pass
+    cfg["no_copy"], cfg["no_paste"] = bool(d.get("no_copy")), bool(d.get("no_paste"))
+    return cfg
+
+
 def scoring_cfg(comp):
     cfg = dict(DEFAULT_SCORING)
     cfg.update(db.jl(comp["scoring"], {}) if isinstance(comp["scoring"], str) else (comp["scoring"] or {}))

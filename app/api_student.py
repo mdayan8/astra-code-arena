@@ -43,6 +43,7 @@ def public_comp(c, comp, me=None):
     d["eligible_years"] = db.jl(comp["eligible_years"])
     d["eligible_departments"] = db.jl(comp["eligible_departments"])
     d["scoring"] = contest.scoring_cfg(comp)
+    d["lockdown"] = contest.lockdown_cfg(comp["lockdown"])
     d["display_status"] = contest.display_status(comp)
     d["end_at"] = contest.end_time(comp)
     d["remaining_sec"] = contest.remaining(comp) if comp["status"] in ("live", "paused") else None
@@ -630,7 +631,7 @@ def my_submissions(competition_id: int | None = None, question_id: int | None = 
 
 
 ACTIVITY_TYPES = {"paste", "paste_blocked", "copy", "cut", "tab_hidden", "tab_visible", "blur", "focus", "fullscreen_exit", "snapshot",
-                  "lang_change", "reset_code", "keystrokes", "right_click", "devtools", "problem_open", "heartbeat", "internet", "ai_tool"}
+                  "lang_change", "reset_code", "keystrokes", "right_click", "devtools", "problem_open", "heartbeat", "internet", "ai_tool", "violation"}
 
 
 class ActivityIn(BaseModel):
@@ -656,7 +657,23 @@ def activity(body: ActivityIn, req: Request, u=Depends(student), c=Depends(conn)
         rows.append((body.competition_id, u["id"], qid, typ, detail, ip, at))
     if rows:
         c.executemany("INSERT INTO activity_events(competition_id,user_id,question_id,type,detail,ip,created_at) VALUES(?,?,?,?,?,?,?)", rows)
+    if any(r[3] == "violation" for r in rows):
+        return {"ok": True, "stored": len(rows), **enforce_warnings(c, body.competition_id, u["id"], ip)}
     return {"ok": True, "stored": len(rows)}
+
+
+def enforce_warnings(c, comp_id, uid, ip):
+    """Server-side count of fair-play warnings (left the test, left full screen) since the last reopen; auto-submits at the limit."""
+    comp = db.one(c, "SELECT status, lockdown FROM competitions WHERE id=?", comp_id)
+    limit = contest.lockdown_cfg(comp["lockdown"])["max_violations"] if comp else 0
+    since = db.one(c, "SELECT MAX(created_at) AS t FROM activity_events WHERE competition_id=? AND user_id=? AND type='reopened'", comp_id, uid)["t"] or 0
+    n = db.one(c, "SELECT COUNT(*) AS n FROM activity_events WHERE competition_id=? AND user_id=? AND type='violation' AND created_at>=?", comp_id, uid, since)["n"]
+    if not limit or n < limit or comp["status"] not in ("live", "paused"):
+        return {"warnings": n, "limit": limit}
+    if c.execute("INSERT OR IGNORE INTO participant_finish(competition_id,user_id,finished_at) VALUES(?,?,?)", (comp_id, uid, db.now())).rowcount:
+        c.execute("INSERT INTO activity_events(competition_id,user_id,type,detail,ip,created_at) VALUES(?,?,'auto_finished',?,?,?)",
+                  (comp_id, uid, json.dumps({"warnings": n, "limit": limit}), ip, db.now()))
+    return {"warnings": n, "limit": limit, "finished": True}
 
 
 @router.get("/api/student/profile")

@@ -15,6 +15,8 @@ const ICON = {
 };
 const MOD = { dashboard: 'Dashboard', competitions: 'Competitions', questions: 'Question Bank', practice: 'Practice', pdf: 'Question Import', ai: 'AI Studio', tests: 'Test Cases', participants: 'Participants',
   submissions: 'Submissions', leaderboards: 'Leaderboards', semesters: 'Semesters', reports: 'Reports', admins: 'Admin Users', audit: 'Audit Logs', database: 'Database', settings: 'System Settings' };
+const ldText = (l = {}) => [{ flag: 'internet reported', block: 'internet blocked', allow: 'internet allowed' }[l.internet || 'flag'], l.fullscreen === 'off' ? 'full screen optional' : 'full screen required',
+  l.leave === 'allow' ? 'leaving allowed' : 'leaving warned', l.max_violations ? `auto-submit at ${l.max_violations} warnings` : '', l.no_copy ? 'no copy' : '', l.no_paste ? 'no paste' : ''].filter(Boolean).join(' · ');
 const icon = (k) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${ICON[k]}"/></svg>`;
 const ROLE = { super_admin: 'Super Admin', event_admin: 'Event Admin', reviewer: 'Question Reviewer' };
 const can = (m) => ME.modules.includes(m);
@@ -148,7 +150,8 @@ async function competitions() {
 
 const AVAIL = () => META?.available || {};
 async function compForm(id) {
-  const c = id ? await GET(`${A}/competitions/${id}`) : { title: '', code: '', description: '', instructions: '## Rules\n- Individual participation only.\n- Read from standard input, write to standard output.\n- Do not share code during the contest.', academic_year: '', semester_label: '', round_no: 1, category: 'General', eligible_years: [], eligible_departments: [], registration_mode: 'open', duration_min: 90, languages: ['c', 'python'], max_marks: 100, scoring: { mode: 'partial', negative_marks: 0, first_blood_bonus: 0, penalty_minutes: 10, tie_break: 'penalty' }, leaderboard_visibility: 'live', show_test_counts: true, allow_late_join: false, auto_start: false, paste_policy: 'log', status: 'draft' };
+  const c = id ? await GET(`${A}/competitions/${id}`) : { lockdown: {}, title: '', code: '', description: '', instructions: '## Rules\n- Individual participation only.\n- Read from standard input, write to standard output.\n- Do not share code during the contest.', academic_year: '', semester_label: '', round_no: 1, category: 'General', eligible_years: [], eligible_departments: [], registration_mode: 'open', duration_min: 90, languages: ['c', 'python'], max_marks: 100, scoring: { mode: 'partial', negative_marks: 0, first_blood_bonus: 0, penalty_minutes: 10, tie_break: 'penalty' }, leaderboard_visibility: 'live', show_test_counts: true, allow_late_join: false, auto_start: false, paste_policy: 'log', status: 'draft' };
+  const LDc = { internet: 'flag', fullscreen: 'required', leave: 'warn', max_violations: 0, ...(c.lockdown || {}) };
   const locked = ['live', 'paused', 'ended'].includes(c.status);
   const v = view(id ? 'Edit competition' : 'New competition', '');
   const sc = c.scoring;
@@ -175,7 +178,14 @@ async function compForm(id) {
         ${fld('Penalty minutes per wrong attempt', inp('sc_penalty_minutes', sc.penalty_minutes, `type=number min=0 ${locked ? 'disabled' : ''}`), 'tie-break only')}</div>
       <div class="grid g3">${fld('Leaderboard visibility', sel('leaderboard_visibility', [['live', 'Live during the contest'], ['after_end', 'Automatically when it ends'], ['hidden', 'Manually: I publish results']], c.leaderboard_visibility))}
         ${fld('Fair-play paste policy', sel('paste_policy', [['log', 'Allow paste, record it'], ['block_external', 'Block pastes from outside the editor'], ['allow', 'Allow, do not flag']], c.paste_policy))}
-        <div style="padding-top:26px">${chk('show_test_counts', c.show_test_counts, 'Show students how many tests passed')}</div></div></div>
+        <div style="padding-top:26px">${chk('show_test_counts', c.show_test_counts, 'Show students how many tests passed')}</div></div>
+      <div class="card pad stack" style="background:var(--surface-2,transparent)"><div><h4 style="margin:0">Exam lockdown</h4><div class="small muted">What students may do during this round. Use stricter rules for exams, and allow internet for online, research or prompt rounds.</div></div>
+        <div class="grid g3">${fld('Internet', sel('ld_internet', [['flag', 'Detect and report to organisers'], ['block', 'Block: test hidden while the PC has internet'], ['allow', 'Allowed (online / prompt rounds)']], LDc.internet))}
+          ${fld('Full screen', sel('ld_fullscreen', [['required', 'Required: test hidden outside full screen'], ['off', 'Not required']], LDc.fullscreen))}
+          ${fld('Leaving the test (other tab or app)', sel('ld_leave', [['warn', 'Hide the test and give a warning'], ['allow', 'Allowed, only recorded']], LDc.leave))}</div>
+        <div class="grid g3">${fld('Auto-submit after warnings', inp('ld_max_violations', LDc.max_violations, 'type=number min=0 max=50'), '0 = never. Leaving full screen or the test window counts as one warning.')}
+          <div style="padding-top:26px">${chk('ld_no_copy', LDc.no_copy, 'Block copying (problem text and code)')}</div><div style="padding-top:26px">${chk('ld_no_paste', LDc.no_paste, 'Block all pasting, even inside the editor')}</div></div>
+        <div class="notice small">${ico('alert', 14)} <b>Block internet</b> only works if the lab network itself has no internet during the round (for example a firewall rule for the exam). Otherwise every student's test stays hidden. Run a round with <b>Detect</b> first: the Fair-play tab shows how many PCs can reach the internet. A web page cannot switch off a PC's internet by itself.</div></div></div>
     <div data-step="3" class="stack hidden"><div class="grid g2" style="align-items:start">${fld('Instructions / rules (Markdown)', ta('instructions', c.instructions, 'rows=16 id="instr"'))}<div><div class="small muted" style="margin-bottom:5px">Preview</div><div class="card pad prose" id="instrPrev" style="min-height:300px"></div></div></div></div>
     <div data-step="4" class="hidden" id="review"></div>
     <div class="row between" style="margin-top:20px"><button type="button" class="btn" id="prev">${ico('left')} Back</button><div class="row"><a class="btn ghost" href="#/competitions${id ? '/' + id : ''}">Cancel</a><button type="button" class="btn" id="next">Next ${ico('right')}</button><button type="submit" class="btn primary" id="save">${id ? 'Save changes' : 'Save as draft'}</button></div></div></form>`;
@@ -190,6 +200,8 @@ async function compForm(id) {
       scoring: locked ? c.scoring : { mode: f.sc_mode, tie_break: f.sc_tie_break, negative_marks: f.sc_negative_marks || 0, first_blood_bonus: f.sc_first_blood_bonus || 0, penalty_minutes: f.sc_penalty_minutes ?? 10 },
       start_at: locked ? c.start_at : (f.start_at || null), duration_min: locked ? c.duration_min : f.duration_min, reg_start: f.reg_start || null, reg_end: f.reg_end || null };
     Object.keys(b).filter((k) => k.startsWith('sc_')).forEach((k) => delete b[k]);
+    b.lockdown = { internet: f.ld_internet, fullscreen: f.ld_fullscreen, leave: f.ld_leave, max_violations: f.ld_max_violations || 0, no_copy: !!f.ld_no_copy, no_paste: !!f.ld_no_paste };
+    Object.keys(b).filter((k) => k.startsWith('ld_')).forEach((k) => delete b[k]);
     return b;
   };
   const review = () => {
@@ -198,7 +210,7 @@ async function compForm(id) {
       <dt>Start</dt><dd>${esc(b.start_at || 'not set')} (${esc(S.tz)}) · ${esc(b.duration_min)} min${b.auto_start ? ' · auto-start' : ' · manual start'}</dd><dt>Registration</dt><dd>${esc(b.registration_mode)} · ${esc(b.reg_start || 'now')} ${ico('right')} ${esc(b.reg_end || 'start')}${b.allow_late_join ? ' · late join on' : ''}</dd>
       <dt>Eligibility</dt><dd>Years: ${b.eligible_years.length ? b.eligible_years.join(', ') : 'all'} · Departments: ${b.eligible_departments.length ? esc(b.eligible_departments.join(', ')) : 'all'}</dd>
       <dt>Languages</dt><dd>${b.languages.map(langName).join(', ') || '<span style="color:var(--red)">none selected</span>'}</dd><dt>Scoring</dt><dd>${esc(b.scoring.mode)} · tie-break ${esc(b.scoring.tie_break)} · negative ${b.scoring.negative_marks} · bonus ${b.scoring.first_blood_bonus} · penalty ${b.scoring.penalty_minutes} min</dd>
-      <dt>Leaderboard</dt><dd>${esc(b.leaderboard_visibility)}${b.show_test_counts ? ' · test counts shown' : ''}</dd><dt>Paste policy</dt><dd>${esc(b.paste_policy)}</dd><dt>Max marks</dt><dd>${esc(b.max_marks)}</dd></dl>`;
+      <dt>Leaderboard</dt><dd>${esc(b.leaderboard_visibility)}${b.show_test_counts ? ' · test counts shown' : ''}</dd><dt>Paste policy</dt><dd>${esc(b.paste_policy)}</dd><dt>Lockdown</dt><dd>${ldText(b.lockdown)}</dd><dt>Max marks</dt><dd>${esc(b.max_marks)}</dd></dl>`;
   };
   $('#cf').onsubmit = (e) => {
     e.preventDefault();
@@ -272,6 +284,7 @@ function compOverview(T, c) {
       <section class="card pad"><dl class="kv"><dt>Schedule</dt><dd>${fmtTime(c.start_at)} ${ico('right')} ${fmtTime(c.end_at)} (${fmtMins(c.duration_min)}${c.extra_min ? ` + ${c.extra_min} extended` : ''}${c.paused_total_sec ? `, paused ${fmtDur(c.paused_total_sec)}` : ''})${c.auto_start ? ' · auto-start' : ''}</dd>
         <dt>Registration</dt><dd>${esc(c.registration_mode)} · ${c.reg_start ? fmtTime(c.reg_start) : 'now'} ${ico('right')} ${c.reg_end ? fmtTime(c.reg_end) : 'start'}${c.allow_late_join ? ' · late join' : ''}</dd>
         <dt>Student link</dt><dd class="row" style="gap:6px"><input class="input mono small" readonly id="shareLink" value="${esc(location.origin + '/#/c/' + encodeURIComponent(c.code))}" style="flex:1;min-width:0" onclick="this.select()"><button class="btn sm" type="button" onclick="const i=document.getElementById('shareLink');i.select();document.execCommand('copy');toast('Link copied: share it with students','ok')">${ico('copy', 13)} Copy</button></dd>
+        <dt>Lockdown</dt><dd>${ldText(c.lockdown)}</dd>
         <dt>Eligibility</dt><dd>Years ${c.eligible_years.join(', ') || 'all'} · ${c.eligible_departments.join(', ') || 'all departments'}</dd><dt>Languages</dt><dd>${c.languages.map(langName).join(', ')}</dd>
         <dt>Scoring</dt><dd>${sc.mode === 'partial' ? 'Partial marks' : 'All-or-nothing'} · tie-break ${esc(sc.tie_break)}${sc.negative_marks ? ` · −${sc.negative_marks}/wrong` : ''}${sc.first_blood_bonus ? ` · +${sc.first_blood_bonus} first solve` : ''}</dd>
         <dt>Results</dt><dd>${c.results_published_at ? `<span class="badge green">published ${ago(c.results_published_at)}</span>` : { live: 'Live leaderboard', after_end: 'Shown automatically at the end', hidden: '<span class="badge amber">Waiting for you to publish</span>' }[c.leaderboard_visibility]}${c.show_test_counts ? ' · test counts visible' : ''}</dd><dt>Fair play</dt><dd>${esc(c.paste_policy)}</dd>
@@ -356,9 +369,9 @@ async function activityModal(c, uid) {
     case 'paste_blocked': return `<b style="color:var(--red)">blocked</b> ${x.chars} chars<pre style="max-height:120px;margin-top:4px">${esc(x.preview || '')}</pre>`;
     case 'copy': case 'cut': return `${x.chars} chars from ${esc(x.from)}`; case 'keystrokes': return `${x.n} keys in 30s`; case 'lang_change': return esc(langName(x.language));
     case 'submit': case 'run': return `#${x.submission} · ${langName(x.language)} · ${x.chars} chars`; default: return x && Object.keys(x).length ? `<span class="mono tiny">${esc(JSON.stringify(x).slice(0, 160))}</span>` : ''; } };
-  const tcol = { paste: 'amber', paste_blocked: 'red', tab_hidden: 'red', tab_visible: 'green', blur: '', copy: 'blue', submit: 'violet', run: '' };
+  const tcol = { paste: 'amber', paste_blocked: 'red', tab_hidden: 'red', tab_visible: 'green', blur: '', copy: 'blue', submit: 'violet', run: '', violation: 'red', auto_finished: 'red', reopened: 'green' };
   const m = modal({ title: `Activity · ${d.person.name}`, size: 'xwide', body: `<div class="row wrap small muted" style="margin-bottom:12px"><span class="mono">${esc(d.person.participant_id || '')}</span><span>${esc(d.person.usn || '')}</span><span>${esc(d.person.department || '')}</span><span>Last login IP ${esc(d.person.last_login_ip || '—')}</span></div>
-    <div class="tabs" id="at"><button class="on" data-t="tl">Timeline (${evs.length})</button><button data-t="sn">Code replay (${snaps.length} snapshots)</button><button data-t="sb">Submissions (${d.submissions.length})</button></div><div id="ab" style="margin-top:12px"></div>`, actions: [{ label: 'Close', kind: 'primary' }] });
+    <div class="tabs" id="at"><button class="on" data-t="tl">Timeline (${evs.length})</button><button data-t="sn">Code replay (${snaps.length} snapshots)</button><button data-t="sb">Submissions (${d.submissions.length})</button></div><div id="ab" style="margin-top:12px"></div>`, actions: [...(d.finished_at ? [{ label: 'Reopen test', onClick: async () => { if (!await confirmBox(`Let ${d.person.name} continue the test? Their warning count starts again from zero.`, { ok: 'Reopen' })) return false; await POST(`${A}/competitions/${c.id}/participants/${uid}/reopen`); toast('Reopened: the student\'s screen opens again within a few seconds', 'ok'); } }] : []), { label: 'Close', kind: 'primary' }] });
   const show = (t) => {
     $$('#at button', m.el).forEach((b) => b.classList.toggle('on', b.dataset.t === t));
     const ab = $('#ab', m.el);

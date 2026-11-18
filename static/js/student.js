@@ -265,7 +265,11 @@ async function compDetail(p) {
         <dt>Registration</dt><dd>${c.registration_mode === 'invite_only' ? 'Organiser invitation' : `${c.reg_start ? fmtTime(c.reg_start) : 'Now'} ${ico('right')} ${c.reg_end ? fmtTime(c.reg_end) : 'start'}`}${c.allow_late_join ? '<div class="tiny muted">Late joining allowed</div>' : ''}</dd>
         ${c.eligible_years.length ? `<dt>Years</dt><dd>${c.eligible_years.join(', ')}</dd>` : ''}${c.eligible_departments.length ? `<dt>Departments</dt><dd>${c.eligible_departments.map(esc).join(', ')}</dd>` : ''}
         <dt>Leaderboard</dt><dd>${{ live: 'Live during the contest', after_end: 'Revealed after the end', hidden: 'Published by organisers' }[c.leaderboard_visibility]}</dd></dl>
-        ${c.paste_policy !== 'allow' ? `<div class="notice small" style="margin-top:14px">Fair play: activity in the coding workspace (pasting, switching tabs) is recorded.${c.paste_policy === 'block_external' ? ' Pasting code from outside the editor is disabled.' : ''}</div>` : ''}</aside></div></div>${footer()}`;
+        ${c.paste_policy !== 'allow' ? `<div class="notice small" style="margin-top:14px">Fair play: activity in the coding workspace (pasting, switching tabs) is recorded.${c.paste_policy === 'block_external' ? ' Pasting code from outside the editor is disabled.' : ''}</div>` : ''}
+        ${(() => { const l = c.lockdown || {}; const r = [l.fullscreen !== 'off' && 'The test runs in full screen and is hidden outside it.', l.leave !== 'allow' && 'Switching to another tab or app hides the test and gives a warning.',
+          l.max_violations && `After ${l.max_violations} warnings your test is submitted automatically.`, l.internet === 'block' && 'Internet is not allowed: the test is hidden while your computer can reach the internet.',
+          l.internet === 'allow' && 'Internet use is allowed in this round.', l.no_copy && 'Copying is disabled.', l.no_paste && 'Pasting is disabled.'].filter(Boolean);
+          return r.length ? `<div class="notice warn small" style="margin-top:10px"><b>Exam rules</b><ul style="margin:6px 0 0;padding-left:18px">${r.map((x) => `<li>${x}</li>`).join('')}</ul></div>` : ''; })()}</aside></div></div>${footer()}`;
   if (innerWidth < 900) $('#cgrid').style.gridTemplateColumns = '1fr';
   const cta = $('#cta');
   if (!S.user) cta.innerHTML = ['Registration Open', 'Live'].includes(c.display_status) ? `<a class="btn primary lg" href="#/login?next=/c/${encodeURIComponent(c.code)}">Sign in to join</a>` : '';
@@ -592,17 +596,37 @@ async function workspace({ mode, compId, qid, q: startQ }) {
   const flush = (beacon) => {
     if (!contest || !queue.length) return;
     const events = queue.splice(0, queue.length);
-    fetch('/api/student/activity', { method: 'POST', keepalive: !!beacon, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': S.csrf }, body: JSON.stringify({ competition_id: compId, events }) }).catch(() => {});
+    fetch('/api/student/activity', { method: 'POST', keepalive: !!beacon, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': S.csrf }, body: JSON.stringify({ competition_id: compId, events }) })
+      .then((r) => r.json()).then((j) => { if (j && j.finished) autoSubmitted(j); }).catch(() => {});
   };
+  const LD = (contest && comp.lockdown) || {};
+  if (LD.no_copy || LD.no_paste) { editor.updateOptions({ contextmenu: false, dragAndDrop: false }); if (LD.no_copy) $('#ws').classList.add('nocopy'); }
+  // ---------- exam lockdown: cover the test while a rule is broken; warnings are counted on the server ----------
+  const isOver = () => { try { return ended || finished; } catch (e) { return ended; } };
+  const why = {};
+  let warnings = 0, lastWarn = 0, awayAt = 0;
+  const lockDraw = () => {
+    let o = $('#ldlock'); const html = isOver() ? null : (why.net || why.fs || why.away);
+    if (!html) return o?.remove();
+    if (!o) { o = document.createElement('div'); o.id = 'ldlock'; o.className = 'wsmsg'; o.style.position = 'fixed'; o.style.zIndex = '95'; ws.appendChild(o); }
+    o.innerHTML = `<div class="card pad center" style="max-width:460px">${html}</div>`;
+    $('[data-ld=fs]', o)?.addEventListener('click', () => ws.requestFullscreen?.().catch(() => toast('Allow full screen to continue', 'err')));
+    $('[data-ld=ok]', o)?.addEventListener('click', () => { why.away = null; lockDraw(); if (LD.fullscreen === 'required' && !document.fullscreenElement) ws.requestFullscreen?.().catch(() => {}); });
+  };
+  const warnLine = () => LD.max_violations ? `<p class="small" style="color:var(--red)"><b>Warning ${warnings} of ${LD.max_violations}.</b> At ${LD.max_violations} your test is submitted automatically.</p>` : '<p class="small muted">This is recorded for the organisers.</p>';
+  const warn = (kind) => { if (!contest || isOver() || Date.now() - lastWarn < 3000) return false; lastWarn = Date.now(); warnings++; track('violation', { kind, n: warnings }); flush(); return true; };
+  const autoSubmitted = (j) => { if (isOver()) return; ended = true; try { finished = true; } catch (e) { /* not declared yet */ } why.net = why.fs = why.away = null; lockDraw();
+    $('#subBtn').disabled = true; $('#finishBtn')?.remove(); document.fullscreenElement && document.exitFullscreen?.();
+    overlay(`<div class="emptyi" style="background:var(--red-soft);color:var(--red)">${ico('alert', 28)}</div><h3>Test submitted automatically</h3><p class="muted">You reached ${j.limit} fair-play warnings (leaving the test or full screen). Your answers so far are kept. If this was a mistake, talk to the invigilator: they can reopen your test.</p><a class="btn primary" href="#/profile">Back to dashboard</a>`); };
   if (contest) {
     const policy = comp.paste_policy;
     const edEl = $('#editor');
     edEl.addEventListener('paste', (e) => {
       const text = e.clipboardData?.getData('text/plain') || '';
       const internal = !!text && text === internalClip;
-      if (policy === 'block_external' && !internal && text.length > 1) {
+      if (LD.no_paste || (policy === 'block_external' && !internal && text.length > 1)) {
         e.preventDefault(); e.stopImmediatePropagation();
-        toast('Pasting from outside the editor is disabled in this competition.', 'err');
+        toast(LD.no_paste ? 'Pasting is disabled in this competition.' : 'Pasting from outside the editor is disabled in this competition.', 'err');
         track('paste_blocked', { chars: text.length, preview: text.slice(0, 300) });
         return;
       }
@@ -611,12 +635,13 @@ async function workspace({ mode, compId, qid, q: startQ }) {
     const onCopy = (e) => {
       const inEd = edEl.contains(e.target);
       let t = inEd ? editor.getModel().getValueInRange(editor.getSelection()) : String(window.getSelection() || '');
+      if (LD.no_copy) { e.preventDefault(); toast('Copying is disabled in this competition.', 'err'); track(e.type, { chars: t.length, from: inEd ? 'editor' : 'page', blocked: true }); return; }
       internalClip = t;
       track(e.type, { chars: t.length, from: inEd ? 'editor' : 'page' });
     };
     document.addEventListener('copy', onCopy, true); document.addEventListener('cut', onCopy, true);
     const vis = () => track(document.hidden ? 'tab_hidden' : 'tab_visible', null);
-    const blur = () => track('blur', null), focus = () => track('focus', null), ctx = () => track('right_click', null);
+    const blur = () => track('blur', null), focus = () => track('focus', null), ctx = (e) => { track('right_click', null); if (LD.no_copy || LD.no_paste) e.preventDefault(); };
     const unload = () => flush(true);
     document.addEventListener('visibilitychange', vis); window.addEventListener('blur', blur); window.addEventListener('focus', focus); document.addEventListener('contextmenu', ctx); window.addEventListener('pagehide', unload);
     editor.onKeyDown(() => keys++);
@@ -628,7 +653,7 @@ async function workspace({ mode, compId, qid, q: startQ }) {
     }, 30000);
     const fl = setInterval(() => flush(), 10000);
     // Contest devices should be on the campus network only. If the public internet is reachable, record it for organisers.
-    let netState = null;
+    let netState = null, np = null;
     const probe = async () => {
       const hit = async (u) => { try { await fetch(u, { mode: 'no-cors', cache: 'no-store', signal: AbortSignal.timeout(4000) }); return true; } catch (e) { return false; } };
       const online = (await Promise.all(['https://connectivitycheck.gstatic.com/generate_204', 'https://www.cloudflare.com/favicon.ico'].map(hit))).some(Boolean);
@@ -636,27 +661,40 @@ async function workspace({ mode, compId, qid, q: startQ }) {
         if (!$('#netWarn')) $('.ws-top').insertAdjacentHTML('beforeend', `<span class="badge red" id="netWarn" title="Your device can reach the internet. This is reported to the organisers.">${ico('wifi', 13)} Internet detected</span>`); }
       if (!online) $('#netWarn')?.remove();
       netState = online;
+      if (LD.internet === 'block') {
+        why.net = online ? `<div class="emptyi" style="background:var(--red-soft);color:var(--red)">${ico('wifi', 28)}</div><h3>Internet is not allowed in this round</h3><p class="muted">This computer can reach the internet. Turn off Wi-Fi, mobile hotspot or any other internet connection. The test opens again by itself within a few seconds. The timer keeps running.</p>` : null;
+        lockDraw(); clearInterval(np); np = setInterval(probe, online ? 5000 : 20000);
+      }
     };
-    probe(); const np = setInterval(probe, 45000);
+    if (LD.internet !== 'allow') { probe(); np = setInterval(probe, LD.internet === 'block' ? 20000 : 45000); }
     onLeave(() => clearInterval(np));
+    // leaving the test window (other tab or app): cover the test on return and count a warning
+    const away = () => { if (!awayAt) awayAt = Date.now(); };
+    const back = () => { if (!awayAt) return; const secs = Math.round((Date.now() - awayAt) / 1000); awayAt = 0;
+      if (LD.leave !== 'warn' || secs < 1 || isOver()) return;
+      if (warn('left_test')) { why.away = `<div class="emptyi" style="background:var(--amber-soft);color:var(--amber)">${ico('alert', 28)}</div><h3>You left the test</h3><p class="muted">You switched to another tab or app for ${secs}s.</p>${warnLine()}<button class="btn primary lg" data-ld="ok">Continue the test</button>`; lockDraw(); } };
+    const onVis = () => (document.hidden ? away() : back());
+    document.addEventListener('visibilitychange', onVis); window.addEventListener('blur', away); window.addEventListener('focus', back);
+    onLeave(() => { document.removeEventListener('visibilitychange', onVis); window.removeEventListener('blur', away); window.removeEventListener('focus', back); });
     onLeave(() => { flush(true); clearInterval(tick); clearInterval(fl); document.removeEventListener('copy', onCopy, true); document.removeEventListener('cut', onCopy, true);
       document.removeEventListener('visibilitychange', vis); window.removeEventListener('blur', blur); window.removeEventListener('focus', focus); document.removeEventListener('contextmenu', ctx); window.removeEventListener('pagehide', unload); });
     track('heartbeat', { ua: navigator.userAgent.slice(0, 120), screen: `${screen.width}x${screen.height}` });
     flush();
   }
-  document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) track('fullscreen_exit', null); });
   $('#fsBtn').onclick = () => document.fullscreenElement ? document.exitFullscreen() : ws.requestFullscreen?.().catch(() => toast('Fullscreen not available', 'err'));
-  if (contest && document.fullscreenEnabled && !document.fullscreenElement) {
-    // Competitions open full screen. Browsers need a click for that if the automatic request is refused.
-    ws.requestFullscreen().catch(() => {
-      const g = document.createElement('div'); g.className = 'wsmsg'; g.style.position = 'fixed'; g.style.zIndex = '90';
-      g.innerHTML = `<div class="card pad center" style="max-width:420px"><img src="${LOGO}" alt="" style="height:44px"><h3 style="margin:10px 0 6px">${esc(comp.title)}</h3>
-        <p class="muted small">The arena runs in full screen. Leaving full screen or switching tabs is recorded for fair play.</p><button class="btn primary lg">Enter full screen &amp; start</button></div>`;
-      ws.appendChild(g);
-      $('button', g).onclick = () => { ws.requestFullscreen().catch(() => {}); g.remove(); };
-    });
-    const back = () => { if (!document.fullscreenElement && $('#ws') && !ended) { if (!$('#fsBack')) $('.ws-top').insertAdjacentHTML('beforeend', '<button class="btn primary sm" id="fsBack">Return to full screen</button>'); $('#fsBack').onclick = () => { ws.requestFullscreen().catch(() => {}); $('#fsBack')?.remove(); }; } else $('#fsBack')?.remove(); };
-    document.addEventListener('fullscreenchange', back); onLeave(() => document.removeEventListener('fullscreenchange', back));
+  if (contest && LD.fullscreen !== 'off' && document.fullscreenEnabled) {
+    const fsGate = (left) => `<img src="${LOGO}" alt="" style="height:44px"><h3 style="margin:10px 0 6px">${left ? 'You left full screen' : esc(comp.title)}</h3>
+      <p class="muted small">${left ? 'The test stays hidden until you return to full screen.' : 'This test runs in full screen. It stays hidden outside full screen, and leaving it or switching to another tab or app counts as a warning.'}</p>${left ? warnLine() : ''}
+      <button class="btn primary lg" data-ld="fs">${left ? 'Return to full screen' : 'Enter full screen &amp; start'}</button>`;
+    const onFs = () => {
+      if (document.fullscreenElement) { why.fs = null; return lockDraw(); }
+      track('fullscreen_exit', null);
+      if (isOver()) return;
+      warn('fullscreen_exit');
+      why.fs = fsGate(true); lockDraw();
+    };
+    document.addEventListener('fullscreenchange', onFs); onLeave(() => document.removeEventListener('fullscreenchange', onFs));
+    if (!document.fullscreenElement) ws.requestFullscreen().catch(() => { why.fs = fsGate(false); lockDraw(); });
   }
 
   // ---------- problem rendering ----------
@@ -832,7 +870,7 @@ async function workspace({ mode, compId, qid, q: startQ }) {
     if (!ok) return;
     try {
       const r = await POST(`/api/student/competitions/${compId}/finish`);
-      finished = true; ended = true;
+      finished = true; ended = true; ws.dataset.fin = Date.now();
       $('#subBtn').disabled = true; $('#finishBtn')?.remove();
       showFinished(r);
       document.fullscreenElement && document.exitFullscreen?.();
@@ -854,7 +892,8 @@ async function workspace({ mode, compId, qid, q: startQ }) {
     endAt = c.remaining_sec != null ? Date.now() / 1000 + c.remaining_sec : null;
     $('#cstatus').innerHTML = badge(c.display_status);
     $('#subBtn').disabled = ended || paused; $('#runBtn').disabled = ended;
-    if (d.finished_at) { finished = true; ended = true; $('#subBtn').disabled = true; $('#finishBtn')?.remove(); showFinished(null); return; }
+    if (d.finished_at) { finished = true; ended = true; $('#subBtn').disabled = true; $('#finishBtn')?.remove(); if (!$('#wsmsg')) showFinished(null); return; }
+    if (finished && !d.finished_at && Date.now() - (ws.dataset.fin || 0) > 15000) return location.reload();  // the invigilator reopened this test
     if (d.disqualified) { ended = true; overlay('<h3>Disqualified</h3><p class="muted">The organisers have disqualified this account from the competition.</p>'); }
     else if (ended) overlay(`<h3>Competition ended</h3><p class="muted">Submissions are closed. Thank you for participating!</p><a class="btn primary" href="#/leaderboard/${compId}">View results</a>`);
     else if (paused) overlay('<h3>' + ico('pause') + ' Paused by organisers</h3><p class="muted">The timer is frozen. You can keep reading and writing code; submissions resume when the competition resumes.</p><button class="btn" onclick="this.closest(\'.wsmsg\').remove()">Keep editing</button>');

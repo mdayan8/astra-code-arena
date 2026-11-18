@@ -607,6 +607,37 @@ def run():
     assert not any(x["id"] == target["id"] for x in s3.get(f"{BASE}/api/student/practice"))
     ok("practice manager: organisers add/remove approved questions and students see the change immediately")
 
+    print("Exam lockdown")
+    LD = {"internet": "block", "fullscreen": "required", "leave": "warn", "max_violations": 2, "no_copy": True, "no_paste": True}
+    c4 = evA.post(f"{A}/competitions", {**base, "title": "Lockdown Round", "code": "ASTRA-LOCK", "round_no": 10, "start_at": int(time.time()) + 60, "lockdown": {**LD, "bogus": 1}})
+    assert evA.get(f"{A}/competitions/{c4['id']}")["lockdown"] == LD
+    c5 = evA.post(f"{A}/competitions", {**base, "title": "Default Round", "code": "ASTRA-LOCK2", "round_no": 11, "start_at": int(time.time()) + 60,
+                                        "lockdown": {"internet": "nonsense", "max_violations": "999"}})
+    d5 = evA.get(f"{A}/competitions/{c5['id']}")["lockdown"]
+    assert d5["internet"] == "flag" and d5["max_violations"] == 50 and d5["fullscreen"] == "required"
+    evA.put(f"{A}/competitions/{c4['id']}/questions", {"questions": [{"question_id": q2["id"], "marks": 100}]})
+    evA.post(f"{A}/competitions/{c4['id']}/action", {"action": "publish"})
+    s3.post(f"{BASE}/api/student/competitions/{c4['id']}/join")
+    evA.post(f"{A}/competitions/{c4['id']}/action", {"action": "start"})
+    assert s3.get(f"{BASE}/api/student/competitions/{c4['id']}/arena")["competition"]["lockdown"] == LD
+    warn = lambda: s3.post(f"{BASE}/api/student/activity", {"competition_id": c4["id"], "events": [{"type": "violation", "detail": {"kind": "left_test"}}]})
+    w1 = warn()
+    assert w1["warnings"] == 1 and not w1.get("finished")
+    assert warn().get("finished")
+    assert s3.get(f"{BASE}/api/student/competitions/{c4['id']}/arena")["finished_at"]
+    time.sleep(5.1)
+    s3.post(f"{BASE}/api/student/submissions", {"competition_id": c4["id"], "question_id": q2["id"], "language": "python", "code": REV_PY, "kind": "submit"}, expect=409)
+    act = evA.get(f"{A}/competitions/{c4['id']}/activity/{m3['id']}")
+    assert act["finished_at"] and any(e["type"] == "auto_finished" for e in act["events"])
+    evA.post(f"{A}/competitions/{c4['id']}/participants/{m3['id']}/reopen")
+    assert not s3.get(f"{BASE}/api/student/competitions/{c4['id']}/arena")["finished_at"]
+    assert warn()["warnings"] == 1  # count restarts after a reopen
+    r = s3.post(f"{BASE}/api/student/submissions", {"competition_id": c4["id"], "question_id": q2["id"], "language": "python", "code": REV_PY, "kind": "submit"})
+    assert wait_sub(s3, r["id"])["verdict"] == "AC"
+    evA.post(f"{A}/competitions/{c4['id']}/action", {"action": "end"})
+    evA.post(f"{A}/competitions/{c4['id']}/participants/{m3['id']}/reopen", expect=409)
+    ok("exam lockdown: rules saved per competition and sanitised, sent to the arena, warnings counted on the server, auto-submit at the limit, organiser reopen resets the count")
+
     print("Rate limiting & recovery")
     bad = Client()
     codes = [bad.h.post(f"{A}/login", json={"username": "root", "password": "wrong"}).status_code for _ in range(8)]

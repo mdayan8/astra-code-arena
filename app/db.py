@@ -324,6 +324,8 @@ MIGRATIONS: list[str] = [
     # 6: profile pictures + manual result publishing
     """ALTER TABLE users ADD COLUMN avatar TEXT;
        ALTER TABLE competitions ADD COLUMN results_published_at INTEGER;""",
+    # 7: exam lockdown rules per competition (internet, full screen, leaving the test, auto-submit, copy/paste)
+    """ALTER TABLE competitions ADD COLUMN lockdown TEXT NOT NULL DEFAULT '{}';""",
 ]
 
 

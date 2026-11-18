@@ -577,3 +577,6 @@ body.with-side #app > .container, body.with-side #app > div > .container { width
 .schrow { gap: 6px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; }
 .daychip { padding: 4px 9px; border-radius: 8px; border: 1px solid var(--border); font-size: 12.5px; cursor: pointer; user-select: none; }
 .daychip.on { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-ring); font-weight: 600; }
+
+/* exam lockdown: no copying the problem text */
+#ws.nocopy .prose, #ws.nocopy .ws-left { -webkit-user-select: none; user-select: none; }
