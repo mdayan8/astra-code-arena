@@ -61,7 +61,14 @@ say "Installing Node.js"
 # Ubuntu 22.04's own Node.js is v12 (too old for modern JavaScript), so use the official Node 20 LTS build
 if ! node -e 'process.exit(parseInt(process.versions.node) < 18 ? 1 : 0)' 2>/dev/null; then
   NODE_V=v20.18.1; ARCH=$(uname -m | sed 's/x86_64/x64/; s/aarch64/arm64/')
-  curl -fsSL "https://nodejs.org/dist/$NODE_V/node-$NODE_V-linux-$ARCH.tar.xz" | tar -xJ -C /opt
+  case "$ARCH" in   # pinned checksums: a tampered download is refused
+    x64) SUM=c6fa75c841cbffac851678a472f2a5bd612fff8308ef39236190e1f8dbb0e567 ;;
+    arm64) SUM=44d1ffc5905c005ace4515ca6f8c090c4c7cfce3a9a67df0dba35c727590b8f6 ;;
+    *) echo "##FAILED: unsupported processor $ARCH"; exit 1 ;;
+  esac
+  curl -fsSL -o /tmp/node.tar.xz "https://nodejs.org/dist/$NODE_V/node-$NODE_V-linux-$ARCH.tar.xz"
+  echo "$SUM  /tmp/node.tar.xz" | sha256sum -c --quiet || { echo "##FAILED: the Node.js download did not match its checksum. Try again."; exit 1; }
+  tar -xJf /tmp/node.tar.xz -C /opt && rm -f /tmp/node.tar.xz
   ln -sf /opt/node-$NODE_V-linux-$ARCH/bin/node /usr/local/bin/node
 fi
 node -v

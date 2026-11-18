@@ -197,6 +197,16 @@ def git(*args, timeout=120):
     return sh("git", *extra, *args, timeout=timeout)
 
 
+def verify_release(repo_dir):
+    """Only install commits signed by the release key. The trusted key list comes from the INSTALLED copy, so a download
+    (or a hijacked GitHub account) cannot swap in its own key. Key changes ship inside a commit signed by the current key."""
+    trusted = ROOT / "ubuntu" / "allowed_signers"
+    if not trusted.is_file():
+        return False
+    code, out = sh("git", "-C", str(repo_dir), "-c", f"gpg.ssh.allowedSignersFile={trusted}", "verify-commit", "HEAD")
+    return code == 0 and "Good" in out
+
+
 def update_safe_now():
     """Never update during a round, or within 60 minutes of one starting."""
     c = db.connect()
@@ -246,6 +256,8 @@ def apply_update(remote):
         return "Download failed: " + out[-200:]
     if sh("git", "-C", str(UPD_DIR), "rev-parse", "HEAD")[1].strip() != remote:
         return "Downloaded version does not match GitHub yet; trying again later."
+    if not verify_release(UPD_DIR):
+        return "Update REFUSED: it is not signed with the trusted release key. Nothing was changed. If you did not push it, secure the GitHub account."
     from app.worker import backup
     c = db.connect()
     try:
