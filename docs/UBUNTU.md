@@ -215,7 +215,7 @@ Run **Diagnose & fix** in the control panel (or `astra-arena doctor`) first. It 
 | Prompt challenges show "Internal error" | AI model not running | `sudo systemctl restart ollama`; check that AI_* is set in `/etc/astra-arena.env` |
 | Slow verdicts with many students | Not enough judge workers | Network → Judge workers +1 (watch Memory), or close other programs |
 | Update failed / "Cannot reach GitHub" | No internet, or a private repository without a token | Connect to the internet, or add the token under Updates |
-| Forgot the admin password | | `astra-arena reset-password` (prints a new temporary password) |
+| Forgot the admin password | | `astra-arena reset-password` (asks you to type a new password) |
 | Lost the organiser link | | The control panel shows it under Links |
 | A student forgot their password | | Students use **Forgot password** (USN + name + date of birth), or Participants → reset |
 | Wrong times on competitions | Clock or timezone | Settings → Date & Time → automatic; APP_TIMEZONE in `/etc/astra-arena.env` |
