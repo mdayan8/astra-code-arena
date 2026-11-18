@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>ASTRA Arena · Control</title>
+<link rel="icon" href="/img/arena-logo.svg">
+<style>
+:root{--bg:#f6f6fa;--card:#fff;--text:#16161d;--muted:#666a78;--line:#e4e4ee;--pri:#6d4aff;--ok:#12a150;--warn:#c27c00;--err:#d92d3a}
+*{box-sizing:border-box}body{margin:0;font:14px/1.45 system-ui,Segoe UI,sans-serif;background:var(--bg);color:var(--text)}
+main{max-width:980px;margin:0 auto;padding:24px}h1{font-size:20px;margin:0}h3{margin:0 0 10px;font-size:15px}
+.top{display:flex;align-items:center;gap:12px;margin-bottom:18px}.top img{width:36px}.sp{flex:1}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+.wide{grid-column:1/-1}.muted{color:var(--muted)}.small{font-size:12.5px}
+.btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 14px;font:inherit;cursor:pointer}.btn:hover{border-color:var(--pri)}
+.btn.pri{background:var(--pri);color:#fff;border-color:var(--pri)}.btn.big{padding:12px 28px;font-size:16px;font-weight:600}.btn.red{color:var(--err)}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:99px;font-weight:600;font-size:13px}
+.pill.on{background:#e3f7ec;color:var(--ok)}.pill.off{background:#f0f0f4;color:var(--muted)}.pill.warn{background:#fff3dc;color:var(--warn)}
+.dot{width:8px;height:8px;border-radius:50%;background:currentColor}
+dl{display:grid;grid-template-columns:150px 1fr;gap:6px 10px;margin:0}dt{color:var(--muted)}dd{margin:0}
+input,select{font:inherit;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:#fff}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.bar{height:8px;background:#eee;border-radius:9px;overflow:hidden;width:140px}.bar i{display:block;height:100%;background:var(--pri)}
+.alert{padding:9px 12px;border-radius:8px;margin-bottom:8px;background:#fff3dc;color:#7a4e00}.alert.err{background:#fde8ea;color:#8f1d27}
+a{color:var(--pri)}code{background:#f0eefc;padding:2px 6px;border-radius:5px}pre{background:#111;color:#ddd;padding:10px;border-radius:8px;max-height:220px;overflow:auto;font-size:12px;white-space:pre-wrap}
+.day{padding:4px 8px;border:1px solid var(--line);border-radius:6px;cursor:pointer;user-select:none}.day.on{background:var(--pri);color:#fff;border-color:var(--pri)}
+.tabs{display:flex;gap:4px;background:#ececf3;padding:3px;border-radius:9px}.tab{border:0;background:none;padding:6px 12px;border-radius:7px;font:inherit;cursor:pointer}.tab.on{background:#fff;font-weight:600}
+.chk{display:grid;grid-template-columns:22px 190px 1fr auto;gap:10px;align-items:start;padding:9px 0;border-bottom:1px solid var(--line)}.lv{width:12px;height:12px;border-radius:50%;margin-top:4px}.lv.ok{background:var(--ok)}.lv.warn{background:var(--warn)}.lv.err{background:var(--err)}
+.prose{padding:22px 28px;max-width:none}.prose h1{font-size:22px}.prose h2{font-size:17px;margin-top:26px;border-bottom:1px solid var(--line);padding-bottom:4px}.prose h3{font-size:15px;margin-top:16px}.prose table{border-collapse:collapse;width:100%;margin:8px 0}.prose td,.prose th{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}.prose th{background:#f3f2fa}.prose pre{background:#f3f2fa;color:var(--text)}
+#msg{position:fixed;bottom:18px;right:18px;background:#16161d;color:#fff;padding:10px 14px;border-radius:8px;display:none}
+</style></head><body><main>
+<div class="top"><img src="/img/arena-logo.svg" alt=""><div><h1>ASTRA Code Arena</h1><div class="small muted">Control panel · only on this computer</div></div><span class="sp"></span><div class="tabs"><button class="tab on" data-tab="ctl">Control</button><button class="tab" data-tab="guide">Guide &amp; help</button></div><span id="state"></span></div>
+<div id="guide" class="card prose" style="display:none"></div><div id="ctl">
+<div id="alerts"></div>
+<div class="grid">
+ <section class="card wide row" style="justify-content:space-between">
+  <div><div id="headline" style="font-size:16px;font-weight:600"></div><div class="small muted" id="sub"></div></div>
+  <div class="row"><button class="btn big pri" id="run">Run</button><button class="btn" id="restart">Restart</button></div>
+ </section>
+ <section class="card"><h3>Links to share</h3><dl>
+  <dt>Students</dt><dd><a id="surl" target="_blank"></a></dd>
+  <dt>Organisers (private)</dt><dd><a id="aurl" target="_blank"></a></dd></dl>
+  <div id="pw" style="display:none;margin-top:12px" class="alert">First admin login: user <code>admin</code>, password <code id="pwv"></code>. You must change it at first sign-in. <button class="btn" id="pwok">I saved it</button></div>
+ </section>
+ <section class="card"><h3>This machine</h3><dl id="mach"></dl></section>
+ <section class="card"><h3>Network</h3>
+  <div class="row"><label>Address <select id="bind"></select></label><label>Port <input id="port" type="number" min="1024" max="65535" style="width:90px"></label></div>
+  <div class="row" style="margin-top:8px"><label>Judge workers <input id="workers" type="number" min="1" max="8" style="width:70px" placeholder="auto"></label><span class="small muted" id="wrec"></span></div>
+  <div class="row" style="margin-top:8px"><label><input type="checkbox" id="runopen"> Start the platform when this app opens</label></div>
+  <div class="row" style="margin-top:10px"><button class="btn pri" id="saveNet">Save</button><button class="btn" id="fw">Open port in firewall</button></div>
+  <div class="small muted" style="margin-top:6px">Students on the same LAN open the Students link. Student programs never get internet: each runs with no network.</div>
+ </section>
+ <section class="card"><h3>Opening hours</h3>
+  <label><input type="checkbox" id="schOn"> Only open at these times (never closes during a live round)</label>
+  <div id="wins" style="margin:8px 0"></div>
+  <div class="row"><button class="btn" id="addWin">Add window</button><button class="btn pri" id="saveSch">Save hours</button></div>
+ </section>
+ <section class="card"><h3>Keep it running</h3>
+  <label><input type="checkbox" id="auto"> Start automatically when this computer starts (even before anyone logs in)</label>
+  <div class="row" style="margin-top:10px"><label>Extra backup folder <input id="mirror" placeholder="e.g. D:\ArenaBackups or a USB drive" style="width:250px"></label><button class="btn" id="saveMirror">Save</button></div>
+  <div class="row" style="margin-top:10px"><button class="btn" id="backup">Back up now</button><button class="btn red" id="quit">Stop and close</button></div>
+  <div class="small muted" style="margin-top:6px">Backups: hourly during a live round, every 6 hours otherwise, 30 kept. If the database is ever damaged it is restored from the newest good backup automatically.</div>
+ </section>
+ <section class="card wide"><div class="row" style="justify-content:space-between"><div><h3 style="margin:0">Diagnose &amp; fix</h3><div class="small muted">Checks the server, judge, languages, database, backups, disk, memory, network, firewall and clock. Each problem shows its fix.</div></div><button class="btn pri" id="diag">Run checks</button></div><div id="job" class="alert" style="display:none;margin-top:10px"></div><div id="checks"></div></section>
+ <section class="card wide"><div class="row" style="justify-content:space-between"><h3>Logs</h3><button class="btn" id="logsBtn">Show</button></div><pre id="logs" style="display:none"></pre></section>
+</div></div><div id="msg"></div></main>
+<script>
+const T='__TOKEN__',$=s=>document.querySelector(s),DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+let st=null,wins=null,formInit=false;
+const toast=t=>{const m=$('#msg');m.textContent=t;m.style.display='block';clearTimeout(m._t);m._t=setTimeout(()=>m.style.display='none',3500)};
+async function post(u,b={}){const r=await fetch(u,{method:'POST',headers:{'X-Token':T,'Content-Type':'application/json'},body:JSON.stringify(b)});const j=await r.json();toast(j.error||(j.message&&j.message!=='ok'?j.message:'Done'));await load();return j}
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const bar=p=>p==null?'—':`<span class="row"><span class="bar"><i style="width:${p}%"></i></span>${p}%</span>`;
+function up(s){const h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h?`${h} h ${m} min`:`${m} min`}
+function drawWins(){$('#wins').innerHTML=wins.map((w,i)=>`<div class="row" style="margin-bottom:6px">${DAYS.map((d,k)=>`<span class="day ${w.days.includes(k)?'on':''}" data-i="${i}" data-k="${k}">${d}</span>`).join('')}
+ <input type="time" value="${w.start}" data-s="${i}"> to <input type="time" value="${w.end}" data-e="${i}"> <button class="btn" data-x="${i}">✕</button></div>`).join('')||'<div class="small muted">No windows: open all the time.</div>';
+ document.querySelectorAll('[data-k]').forEach(x=>x.onclick=()=>{const w=wins[x.dataset.i],k=+x.dataset.k;w.days=w.days.includes(k)?w.days.filter(y=>y!==k):[...w.days,k];drawWins()});
+ document.querySelectorAll('[data-s]').forEach(x=>x.onchange=()=>wins[x.dataset.s].start=x.value);
+ document.querySelectorAll('[data-e]').forEach(x=>x.onchange=()=>wins[x.dataset.e].end=x.value);
+ document.querySelectorAll('[data-x]').forEach(x=>x.onclick=()=>{wins.splice(+x.dataset.x,1);drawWins()})}
+async function load(){
+ st=await (await fetch('/api/status')).json();const S=st.settings,sp=st.specs,u=st.usage;
+ $('#state').innerHTML=st.running?`<span class="pill on"><span class="dot"></span>Running</span>`:st.wanted?`<span class="pill warn"><span class="dot"></span>Starting / recovering</span>`:`<span class="pill off"><span class="dot"></span>Stopped</span>`;
+ $('#run').textContent=st.wanted?'Stop':'Run';$('#run').classList.toggle('pri',!st.wanted);
+ $('#headline').textContent=!st.wanted?'The platform is stopped.':!st.open_now?`Running, but closed to students by opening hours${st.next_open?` · opens ${st.next_open}`:''}`:st.live.length?`Live round: ${st.live.join(', ')}`:'Running and open to students.';
+ $('#sub').textContent=st.wanted?`Up ${up(st.uptime)} · ${st.signed_in_last_hour} signed in during the last hour · ${st.restarts} automatic restart${st.restarts===1?'':'s'}`:'Press Run to start. It keeps running in the background after you close this window.';
+ $('#alerts').innerHTML=(st.last_error?`<div class="alert">${esc(st.last_error)}</div>`:'')+(st.wanted?st.alerts:[]).map(a=>`<div class="alert ${a.level==='err'?'err':''}">${esc(a.text)}</div>`).join('');
+ $('#surl').textContent=$('#surl').href=st.student_url;$('#aurl').textContent=$('#aurl').href=st.admin_url;
+ $('#pw').style.display=S.first_password?'block':'none';$('#pwv').textContent=S.first_password||'';
+ $('#mach').innerHTML=`<dt>Processor</dt><dd>${sp.cores} cores${sp.threads>sp.cores?` (${sp.threads} threads)`:""}</dd><dt>Memory</dt><dd>${sp.ram_mb?Math.round(sp.ram_mb/1024*10)/10+' GB':'—'}</dd><dt>Free disk</dt><dd>${sp.disk_free_gb} GB</dd>
+  <dt>CPU use</dt><dd>${bar(u.cpu)}</dd><dt>Memory use</dt><dd>${bar(u.ram_pct)}</dd><dt>Comfortable for</dt><dd>about ${sp.max_students} students at once (${sp.recommended_workers} judge worker${sp.recommended_workers===1?'':'s'})</dd>`;
+ $('#wrec').textContent=`recommended ${sp.recommended_workers} for this machine`;
+ if(!formInit){formInit=true;
+  $('#bind').innerHTML=[['0.0.0.0','All networks (recommended)'],...st.ips.map(i=>[i,i]),['127.0.0.1','This computer only']].map(([v,t])=>`<option value="${v}" ${v===S.bind?'selected':''}>${t}</option>`).join('');
+  $('#port').value=S.port;$('#workers').value=S.workers||'';$('#runopen').checked=S.run_on_open;$('#mirror').value=S.backup_mirror||'';
+  $('#schOn').checked=!!st.schedule.enabled;wins=(st.schedule.windows||[]).map(w=>({...w}));drawWins()}
+ $('#auto').checked=!!st.autostart;$('#auto').disabled=st.autostart===null;$('#job').style.display=st.job?'block':'none';$('#job').textContent=st.job;
+}
+$('#run').onclick=()=>post(st.wanted?'/api/stop':'/api/start');
+$('#restart').onclick=()=>post('/api/restart');
+$('#saveNet').onclick=()=>post('/api/settings',{bind:$('#bind').value,port:$('#port').value,workers:$('#workers').value,run_on_open:$('#runopen').checked});
+$('#saveMirror').onclick=()=>post('/api/settings',{backup_mirror:$('#mirror').value});
+$('#fw').onclick=()=>post('/api/firewall');
+$('#auto').onchange=()=>post('/api/autostart',{on:$('#auto').checked});
+$('#addWin').onclick=()=>{wins.push({days:[0,1,2,3,4],start:'09:00',end:'17:00'});drawWins()};
+$('#saveSch').onclick=()=>{if($('#schOn').checked&&!wins.length)return toast('Add a time window first');post('/api/schedule',{enabled:$('#schOn').checked,windows:wins,message:st.schedule.message||''})};
+$('#backup').onclick=()=>post('/api/backup');
+$('#pwok').onclick=()=>post('/api/forget-password');
+$('#quit').onclick=()=>{if(confirm('Stop the platform and close the control panel? Students will lose access.'))post('/api/quit')};
+const ACT={start:'Run',restart:'Restart',backup:'Back up now',firewall:'Open port',install_langs:'Install'};
+async function diag(){$('#checks').innerHTML='<div class="small muted" style="padding:10px 0">Checking...</div>';const r=await (await fetch('/api/diagnose')).json();
+ $('#checks').innerHTML=r.map(c=>`<div class="chk"><span class="lv ${c.level}"></span><b>${esc(c.name)}</b><div>${esc(c.detail)}${c.fix?`<div class="small" style="color:${c.level==='err'?'var(--err)':'var(--warn)'}">Fix: ${esc(c.fix)}</div>`:''}</div>${c.action?`<button class="btn" data-act="${c.action}">${ACT[c.action]}</button>`:'<span></span>'}</div>`).join('');
+ document.querySelectorAll('[data-act]').forEach(b=>b.onclick=async()=>{b.disabled=true;await post('/api/'+b.dataset.act);setTimeout(diag,b.dataset.act==='install_langs'?1000:4000)})}
+$('#diag').onclick=diag;
+function mdx(t){const e=s=>esc(s).replace(/`([^`]+)`/g,'<code>$1</code>').replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>').replace(/\[([^\]]+)\]\(([^)]+)\)/g,'<a href="$2" target="_blank">$1</a>');
+ let h='',lines=t.split('\n'),i=0;while(i<lines.length){let l=lines[i];
+  if(l.startsWith('```')){let b=[];i++;while(i<lines.length&&!lines[i].startsWith('```'))b.push(lines[i++]);h+=`<pre>${esc(b.join('\n'))}</pre>`;i++;continue}
+  if(/^#{1,3} /.test(l)){const n=l.match(/^#+/)[0].length;h+=`<h${n}>${e(l.slice(n+1))}</h${n}>`}
+  else if(l.startsWith('|')){let rows=[];while(i<lines.length&&lines[i].startsWith('|'))rows.push(lines[i++]);rows=rows.filter(r=>!/^\|[\s:|-]+\|$/.test(r)).map(r=>r.slice(1,-1).split('|').map(x=>x.trim()));h+=`<table><tr>${rows[0].map(c=>`<th>${e(c)}</th>`).join('')}</tr>${rows.slice(1).map(r=>`<tr>${r.map(c=>`<td>${e(c)}</td>`).join('')}</tr>`).join('')}</table>`;continue}
+  else if(/^(\d+\.|-) /.test(l)){const ol=/^\d/.test(l);let it=[];while(i<lines.length&&/^(\d+\.|-) /.test(lines[i]))it.push(lines[i++].replace(/^(\d+\.|-) /,''));h+=`<${ol?'ol':'ul'}>${it.map(x=>`<li>${e(x)}</li>`).join('')}</${ol?'ol':'ul'}>`;continue}
+  else if(l.trim())h+=`<p>${e(l)}</p>`;i++}return h}
+document.querySelectorAll('.tab').forEach(b=>b.onclick=async()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x===b));const g=b.dataset.tab==='guide';$('#ctl').style.display=g?'none':'';$('#guide').style.display=g?'block':'none';if(g&&!$('#guide').innerHTML)$('#guide').innerHTML=mdx(await (await fetch('/api/guide')).text())});
+$('#logsBtn').onclick=async()=>{const l=await (await fetch('/api/logs')).json();$('#logs').style.display='block';$('#logs').textContent=`--- web ---\n${l.web}\n--- judge ---\n${l.judge}`};
+load();setInterval(()=>load().catch(()=>{}),5000);
+</script></body></html>

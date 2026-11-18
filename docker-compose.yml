@@ -1,0 +1,68 @@
+# Production stack for the college server:  docker compose up -d --build
+# web   : serves the student portal, admin route and APIs on APP_PORT
+# judge : runs student code. NO network at all, read-only filesystem, small tmpfs, dropped capabilities;
+#         each job runs as its own unprivileged uid with CPU/memory/process/file limits.
+services:
+  web:
+    build:
+      context: .
+      args:
+        EXTRA_LANGS: ${EXTRA_LANGS-java node}   # C, C++, Python always; add "go rust" here if wanted
+    image: astra-arena:latest
+    command: python -m app.main
+    init: true
+    env_file: .env
+    environment:
+      DATA_DIR: /data
+      APP_HOST: 0.0.0.0
+      APP_PORT: ${APP_PORT:-8000}   # keeps the in-container port equal to the published port
+    ports:
+      - "${APP_BIND:-0.0.0.0}:${APP_PORT:-8000}:${APP_PORT:-8000}"   # APP_BIND = which server IP to listen on (0.0.0.0 = all)
+    volumes:
+      - astra-data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # lets the optional AI assistant reach Ollama on the server
+    restart: unless-stopped
+
+  judge:
+    image: astra-arena:latest   # same image as web (built once)
+    pull_policy: never
+    depends_on: [web]
+    command: python -m app.worker
+    init: true              # tini as PID 1 reaps orphaned/zombie processes left by killed student programs
+    environment:            # deliberately NOT the .env file: the judge needs no secrets
+      DATA_DIR: /data
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Kolkata}
+      JUDGE_WORKERS: ${JUDGE_WORKERS:-4}
+      JUDGE_TMP: /tmp/astra-judge
+      JUDGE_NETWORK_ISOLATED: "true"
+      BACKUP_KEEP: ${BACKUP_KEEP:-14}
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp:exec,size=1g,mode=1777   # exec: compiled C/C++ binaries run from here
+    pids_limit: 1024
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID, CHOWN, DAC_OVERRIDE, FOWNER, KILL]
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - astra-data:/data
+    restart: unless-stopped
+
+  # Optional local AI model for the question assistant: ./deploy.sh --with-ai  (or: docker compose --profile ai up -d)
+  # Not exposed outside the server; the model is unloaded from RAM after 5 idle minutes.
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ai"]
+    environment:
+      OLLAMA_KEEP_ALIVE: 5m
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_MAX_LOADED_MODELS: "1"
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  astra-data:
+  ollama-models:
