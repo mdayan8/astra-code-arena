@@ -2,7 +2,8 @@
 # ASTRA Code Arena: one-command install for Ubuntu 22.04 / 24.04 (desktop or server).
 #   sudo ./ubuntu/install.sh            install or update (keeps all data)
 #   sudo ./ubuntu/install.sh --with-ai  also install the local AI model (Prompt challenges, AI Studio); needs ~1.5 GB more RAM
-#   sudo ./ubuntu/install.sh --uninstall  remove the app (data in /var/lib/astra-arena is kept)
+#   sudo ./ubuntu/install.sh --import FILE   bring all data from an old computer (a move package from its control panel)
+#   sudo ./ubuntu/install.sh --uninstall [--purge]   remove the app (data kept unless --purge; a final move package is always kept)
 set -euo pipefail
 [ "$(id -u)" = 0 ] || { echo "Run with sudo: sudo $0 $*"; exit 1; }
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
@@ -11,10 +12,33 @@ STEP=""
 say() { STEP="$*"; printf '\n\033[1;35m==> %s\033[0m\n' "$*"; }   # the setup app reads these lines for its progress bar
 trap 'echo "##FAILED during: $STEP"' ERR
 
-if [ "${1:-}" = "--uninstall" ]; then
+WITH_AI="" IMPORT="" UNINSTALL="" PURGE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --with-ai) WITH_AI=1 ;;
+    --import) IMPORT="$(realpath "$2")"; shift ;;
+    --uninstall) UNINSTALL=1 ;;
+    --purge) PURGE=1 ;;
+  esac
+  shift
+done
+[ -z "$IMPORT" ] || [ -f "$IMPORT" ] || { echo "##FAILED: move package not found: $IMPORT"; exit 1; }
+
+if [ -n "$UNINSTALL" ]; then
+  PORT=$(python3 -c "import json;print(json.load(open('$DATA/launcher.json')).get('port',8000))" 2>/dev/null || echo 8000)
   systemctl disable --now $SVC 2>/dev/null || true
+  if [ -x $APP/.venv/bin/python ]; then
+    (set -a; . $ENVF; set +a; cd $APP && .venv/bin/python launcher.py --release-ip) || true   # free the fixed address for the next host
+    [ -n "$PURGE" ] || (set -a; . $ENVF; set +a; cd $APP && .venv/bin/python -c "import launcher; print('Final move package:', launcher.EXPORTS / launcher.make_package())") || true
+  fi
+  command -v ufw >/dev/null && ufw delete allow "$PORT/tcp" >/dev/null 2>&1 || true
+  systemctl unmask sleep.target suspend.target hibernate.target hybrid-sleep.target >/dev/null 2>&1 || true
   rm -rf $APP /etc/systemd/system/$SVC.service /usr/local/bin/astra-arena /usr/share/applications/astra-arena.desktop
-  systemctl daemon-reload; echo "Removed. Your data is still in $DATA (delete it yourself if you really want to)."; exit 0
+  readlink /usr/local/bin/node 2>/dev/null | grep -q '^/opt/node-v' && rm -f /usr/local/bin/node && rm -rf /opt/node-v20.18.1-linux-*
+  systemctl daemon-reload
+  if [ -n "$PURGE" ]; then rm -rf $DATA $ENVF; echo "Removed ASTRA Arena and all its data from this computer."
+  else echo "Removed ASTRA Arena. Data and move packages are kept in $DATA (sudo $0 --uninstall --purge deletes them)."; fi
+  exit 0
 fi
 
 say "Checking this computer"
@@ -58,12 +82,18 @@ JUDGE_TMP=/var/tmp/astra-judge
 EOF
 fi
 
-if [ "${1:-}" = "--with-ai" ] || [ "${2:-}" = "--with-ai" ]; then
+if [ -n "$WITH_AI" ]; then
   say "Installing the local AI model (Ollama + qwen2.5-coder:1.5b, about 1 GB download)"
   command -v ollama >/dev/null || curl -fsSL https://ollama.com/install.sh | sh
   systemctl enable --now ollama
   sleep 3; ollama pull qwen2.5-coder:1.5b
   sed -i 's|^# AI_BASE_URL=.*|AI_BASE_URL=http://127.0.0.1:11434/v1|; s|^# AI_MODEL=.*|AI_MODEL=qwen2.5-coder:1.5b|' $ENVF
+fi
+
+if [ -n "$IMPORT" ]; then
+  say "Bringing in data from the old computer"
+  systemctl stop $SVC 2>/dev/null || true
+  (set -a; . $ENVF; set +a; cd $APP && .venv/bin/python launcher.py --import "$IMPORT")
 fi
 
 say "Creating the background service (starts at boot, restarts on crash)"
@@ -91,7 +121,7 @@ EOF
 
 cat > /usr/local/bin/astra-arena <<'EOF'
 #!/usr/bin/env bash
-# astra-arena: open | status | start | stop | restart | logs | backup | doctor
+# astra-arena: open | status | start | stop | restart | logs | backup | doctor | package | remove
 case "${1:-open}" in
   open) xdg-open http://127.0.0.1:8765/ >/dev/null 2>&1 || echo "Open http://127.0.0.1:8765/ in a browser on this computer." ;;
   status) systemctl status astra-arena --no-pager ;;
@@ -101,7 +131,9 @@ case "${1:-open}" in
   doctor) curl -s http://127.0.0.1:8765/api/diagnose | python3 -c 'import json,sys
 for c in json.load(sys.stdin): print({"ok":"[ OK ]","warn":"[WARN]","err":"[FAIL]"}[c["level"]], c["name"]+":", c["detail"], ("\n        Fix: "+c["fix"]) if c["fix"] else "")' \
           || echo "The control panel is not answering. Try: astra-arena restart" ;;
-  *) echo "usage: astra-arena open|status|start|stop|restart|logs|backup|doctor" ;;
+  package) sudo bash -c 'set -a; . /etc/astra-arena.env; cd /opt/astra-arena && .venv/bin/python -c "import launcher; print(\"Move package:\", launcher.EXPORTS / launcher.make_package())"' ;;
+  remove) sudo /opt/astra-arena/ubuntu/install.sh --uninstall ;;
+  *) echo "usage: astra-arena open|status|start|stop|restart|logs|backup|doctor|package|remove" ;;
 esac
 EOF
 chmod 755 /usr/local/bin/astra-arena
@@ -127,7 +159,8 @@ systemctl stop $SVC 2>/dev/null || true
 systemctl daemon-reload
 systemctl enable $SVC >/dev/null
 systemctl restart $SVC
-command -v ufw >/dev/null && ufw status | grep -q "Status: active" && ufw allow 8000/tcp >/dev/null || true
+PORT=$(python3 -c "import json;print(json.load(open('$DATA/launcher.json')).get('port',8000))" 2>/dev/null || echo 8000)
+command -v ufw >/dev/null && ufw status | grep -q "Status: active" && ufw allow "$PORT/tcp" >/dev/null || true
 
 for i in $(seq 1 30); do curl -s http://127.0.0.1:8765/api/status -o /tmp/astra-st.json && break; sleep 1; done
 STUDENTS=$(python3 -c "import json;print(json.load(open('/tmp/astra-st.json'))['student_url'])" 2>/dev/null || echo "http://$(hostname -I | awk '{print $1}'):8000/")

@@ -11,14 +11,16 @@ import secrets
 import shutil
 import signal
 import socket
+import sqlite3
 import subprocess
 import sys
 import threading
 import time
 import urllib.request
 import webbrowser
+import zipfile
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parent
 os.chdir(ROOT)
@@ -131,7 +133,9 @@ def ensure_fixed_ip():
             if a.strip().startswith(S["fixed_ip"] + "/"):
                 sh("nmcli", "connection", "modify", con, "-ipv4.addresses", a.strip())
     gw_ok = reachable(gw, primary.ip)
-    for ip in candidates(primary, gw):
+    hint = S.get("fixed_ip_hint")  # the old computer's address after a move: same student link if the network allows it
+    first = [ipaddress.ip_address(hint)] if hint and ipaddress.ip_address(hint) in primary.network and str(primary.ip) != hint else []
+    for ip in first + list(candidates(primary, gw)):
         if not ip_free(ip, dev):
             continue
         cidr = f"{ip}/{primary.network.prefixlen}"
@@ -141,6 +145,7 @@ def ensure_fixed_ip():
         now = {str(a.ip) for a in (net_info() or (0, 0, []))[2]}
         if str(ip) in now and (not gw_ok or reachable(gw, ip)):
             S["fixed_ip"] = str(ip)
+            S.pop("fixed_ip_hint", None)
             save()
             return S["fixed_ip"]
         # someone else had it, or the campus network blocks self-chosen addresses: undo and try the next one
@@ -152,6 +157,104 @@ def ensure_fixed_ip():
     S["fixed_ip"] = None
     save()
     return None
+
+
+def release_fixed_ip():
+    """Give the fixed address back to the network (before removing this host, so a new host can take it over)."""
+    ip, info = S.get("fixed_ip"), net_info() if shutil.which("ip") else None
+    if ip and info and IS_ROOT and shutil.which("nmcli"):
+        con = sh("nmcli", "-g", "GENERAL.CONNECTION", "device", "show", info[0])[1].strip()
+        for a in sh("nmcli", "-g", "ipv4.addresses", "connection", "show", con)[1].replace("\\", "").split(","):
+            if a.strip().startswith(ip + "/"):
+                sh("nmcli", "connection", "modify", con, "-ipv4.addresses", a.strip())
+        sh("nmcli", "device", "reapply", info[0], timeout=30)
+    S["fixed_ip"] = None
+    save()
+    return ip
+
+
+# ---------- moving to another computer ----------
+EXPORTS = config.DATA_DIR / "exports"
+
+
+def make_package():
+    """One zip with the whole platform: database (consistent online copy), uploads and network settings."""
+    EXPORTS.mkdir(exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    tmp = EXPORTS / f".move-{stamp}.db"
+    src, dst = sqlite3.connect(config.DB_PATH), sqlite3.connect(tmp)
+    src.backup(dst)
+    dst.close(); src.close()
+    if not db._healthy(tmp):
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError("The database copy failed its check. Run Diagnose & fix, then try again.")
+    name = f"astra-move-{stamp}.zip"
+    with zipfile.ZipFile(EXPORTS / name, "w", zipfile.ZIP_DEFLATED) as z:
+        z.write(tmp, "astra.db")
+        for f in config.UPLOAD_DIR.rglob("*"):
+            if f.is_file():
+                z.write(f, "uploads/" + f.relative_to(config.UPLOAD_DIR).as_posix())
+        z.writestr("manifest.json", json.dumps({"kind": "astra-move", "created_at": int(time.time()), "from": socket.gethostname(),
+                                                "fixed_ip": S.get("fixed_ip"), "port": S["port"], "auto_ip": S["auto_ip"]}))
+    tmp.unlink()
+    for old in sorted(EXPORTS.glob("astra-move-*.zip"))[:-3]:  # keep the newest 3
+        old.unlink()
+    return name
+
+
+def import_package(path):
+    """Replace this computer's data with a move package (a safety backup of the current data is kept first)."""
+    stage = config.DATA_DIR / "import-stage"
+    shutil.rmtree(stage, ignore_errors=True)
+    stage.mkdir()
+    try:
+        with zipfile.ZipFile(path) as z:
+            man = json.loads(z.read("manifest.json"))
+            if man.get("kind") != "astra-move":
+                raise ValueError("This is not an ASTRA Arena move package.")
+            for n in z.namelist():  # only the database and uploads, never paths outside the folder
+                parts = Path(n).parts
+                if n == "astra.db" or (parts and parts[0] == "uploads" and ".." not in parts and not n.endswith("/") and not Path(n).is_absolute()):
+                    z.extract(n, stage)
+    except (zipfile.BadZipFile, KeyError, ValueError) as e:
+        shutil.rmtree(stage, ignore_errors=True)
+        raise ValueError(f"Cannot use this file: {e}") from None
+    if not db._healthy(stage / "astra.db"):
+        shutil.rmtree(stage, ignore_errors=True)
+        raise ValueError("The database inside this package is damaged.")
+    was_running = bool(procs)
+    stop(remember=False)
+    config.BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    if db._healthy(config.DB_PATH):
+        src, dst = sqlite3.connect(config.DB_PATH), sqlite3.connect(config.BACKUP_DIR / f"astra-before-import-{time.strftime('%Y%m%d-%H%M%S')}.db")
+        src.backup(dst)
+        dst.close(); src.close()
+    for ext in ("-wal", "-shm"):
+        Path(str(config.DB_PATH) + ext).unlink(missing_ok=True)
+    shutil.move(str(stage / "astra.db"), config.DB_PATH)
+    shutil.rmtree(config.UPLOAD_DIR, ignore_errors=True)
+    shutil.move(str(stage / "uploads"), config.UPLOAD_DIR) if (stage / "uploads").exists() else config.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(stage, ignore_errors=True)
+    db.init()  # runs any newer migrations on the imported data
+    S.update(port=int(man.get("port") or S["port"]), auto_ip=bool(man.get("auto_ip", True)), fixed_ip_hint=man.get("fixed_ip"), first_password=None)
+    save()
+    if was_running:
+        start()
+    return man
+
+
+def remove_host(purge):
+    """Uninstall from this computer. A final move package is always kept (in /var/backups when the data is deleted)."""
+    if not IS_ROOT or not Path("/opt/astra-arena/ubuntu/install.sh").exists():
+        return "Run in a terminal: sudo /opt/astra-arena/ubuntu/install.sh --uninstall"
+    name = make_package()
+    keep = EXPORTS / name
+    if purge:
+        Path("/var/backups").mkdir(exist_ok=True)
+        keep = Path(shutil.copy2(keep, "/var/backups/" + name))
+    # run outside this service, because uninstalling stops the service (and this process)
+    sh("systemd-run", "--unit", f"astra-remove-{int(time.time())}", "--collect", "/bin/bash", "/opt/astra-arena/ubuntu/install.sh", "--uninstall", *(["--purge"] if purge else []))
+    return f"Removing ASTRA Arena from this computer. Final move package kept at {keep}"
 
 
 def port_free(port, host="0.0.0.0"):
@@ -400,6 +503,18 @@ class Panel(http.server.BaseHTTPRequestHandler):
         if path == "/api/logs":
             tail = lambda n: (LOGS / f"{n}.log").read_bytes()[-8000:].decode("utf-8", "replace") if (LOGS / f"{n}.log").exists() else ""
             return self.send(200, json.dumps({"web": tail("web"), "judge": tail("judge")}))
+        if path.startswith("/api/package/"):  # download a move package (token required: it holds all data)
+            f = EXPORTS / Path(path).name
+            if parse_qs(urlparse(self.path).query).get("t", [""])[0] != TOKEN or not f.is_file() or not f.name.startswith("astra-move-"):
+                return self.send(403, "{}")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Disposition", f'attachment; filename="{f.name}"')
+            self.send_header("Content-Length", str(f.stat().st_size))
+            self.end_headers()
+            with open(f, "rb") as fh:
+                shutil.copyfileobj(fh, self.wfile)
+            return
         if path.startswith("/img/"):
             f = ROOT / "static" / "img" / Path(path).name
             if f.is_file():
@@ -409,11 +524,29 @@ class Panel(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         if self.headers.get("X-Token") != TOKEN:  # other web pages cannot drive the panel
             return self.send(403, '{"error":"forbidden"}')
+        path, msg = urlparse(self.path).path, "ok"
+        if path == "/api/import":  # raw zip upload from the panel
+            f = config.DATA_DIR / "upload-import.zip"
+            left = int(self.headers.get("Content-Length") or 0)
+            with open(f, "wb") as out:
+                while left > 0:
+                    chunk = self.rfile.read(min(left, 1 << 20))
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    left -= len(chunk)
+            try:
+                man = import_package(f)
+                msg = f"Imported data from {man.get('from')}. Sign in with the admin accounts from that computer."
+            except ValueError as e:
+                return self.send(400, json.dumps({"error": str(e)}))
+            finally:
+                f.unlink(missing_ok=True)
+            return self.send(200, json.dumps({"ok": True, "message": msg, "error": run["last_error"]}))
         try:
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
         except ValueError:
             return self.send(400, '{"error":"bad request"}')
-        path, msg = urlparse(self.path).path, "ok"
         if path == "/api/start":
             start()
         elif path == "/api/stop":
@@ -453,6 +586,16 @@ class Panel(http.server.BaseHTTPRequestHandler):
             msg = set_autostart(bool(body.get("on")))
         elif path == "/api/firewall":
             msg = firewall()
+        elif path == "/api/package":
+            try:
+                name = make_package()
+            except (RuntimeError, sqlite3.Error) as e:
+                return self.send(500, json.dumps({"error": str(e)}))
+            return self.send(200, json.dumps({"ok": True, "message": "Move package ready", "name": name, "url": f"/api/package/{name}?t={TOKEN}"}))
+        elif path == "/api/remove":
+            if body.get("confirm") != "REMOVE":
+                return self.send(400, '{"error":"Type REMOVE to confirm."}')
+            msg = remove_host(bool(body.get("purge")))
         elif path == "/api/fixed_ip":
             msg = "Fixed address: " + (ensure_fixed_ip() or "not available here, the normal address is used")
         elif path == "/api/install_langs":
@@ -475,6 +618,13 @@ class Panel(http.server.BaseHTTPRequestHandler):
 
 def main():
     bg = "--background" in sys.argv
+    if "--import" in sys.argv:  # used by the installer: bring data from the old computer
+        man = import_package(sys.argv[sys.argv.index("--import") + 1])
+        print(f"Imported data from {man.get('from')} (package of {time.strftime('%d %b %Y %H:%M', time.localtime(man.get('created_at', 0)))})")
+        return
+    if "--release-ip" in sys.argv:  # used by the uninstaller
+        print("Released fixed address:", release_fixed_ip())
+        return
     if "--fixed-ip" in sys.argv:  # used by the installer (the service is stopped meanwhile)
         print("Fixed address:", ensure_fixed_ip() or "not set (using this PC's normal address)")
         return

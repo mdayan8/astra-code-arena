@@ -66,6 +66,7 @@ The installer:
 | Network | Address (All networks is recommended), Port (default 8000), Judge workers (empty = auto) |
 | Opening hours | Days and times students can use the site. Outside them students see a "closed, opens at..." page. It never closes during a live round, and admins always have access |
 | Keep it running | Start at boot, an extra backup folder (e.g. a USB drive), Back up now, Stop and close |
+| Move to another computer | Create a move package, import one, or remove this computer as the host (section 8) |
 | Diagnose & fix | Runs 14 health checks. Each problem shows the fix, often as a one-click button |
 | Logs | The last lines from the web server and the judge |
 
@@ -162,7 +163,26 @@ Under **Results visibility**, choose live leaderboard, show at the end, or hidde
 
 **Manual restore:** Organiser site → **Database** → choose a backup → **Restore** (type RESTORE). A safety backup is taken first.
 
-## 8. Troubleshooting
+## 8. Moving to another computer, or removing it
+
+Everything moves in one file, and the new computer adapts by itself: it sizes the judge to its own CPU and RAM, and picks its own fixed address.
+
+1. **Old computer:** Control panel → **Move to another computer** → **Create move package** → **Download**. Save it to a USB drive. It holds every competition, question, student, result, photo and setting.
+2. **New computer:** get the code (ZIP or `git clone`), right-click `start.sh` → Run as a Program. Under **Moving from another computer** choose the package, then press **Install**. Sign in with the same admin accounts as before.
+3. **Old computer:** **Remove from this computer**, then type REMOVE. This:
+   - stops the platform;
+   - frees its fixed address;
+   - closes the firewall port;
+   - lets the PC sleep again;
+   - removes the app and the menu icon.
+
+   By default the data stays in `/var/lib/astra-arena`. Tick **Also delete all data** to wipe it; a final package is still kept in `/var/backups`.
+
+If both computers are on the same network, the new one takes over the old fixed address once the old one is removed, so **the student link stays the same**. Otherwise share the new link from the control panel.
+
+The same from a terminal: `astra-arena package` (create a move package) and `astra-arena remove` (uninstall). On an installed PC, the panel's **Import** button also brings in a package.
+
+## 9. Troubleshooting
 
 Run **Diagnose & fix** in the control panel (or `astra-arena doctor`) first. It finds most problems and shows the fix.
 
@@ -182,9 +202,9 @@ Run **Diagnose & fix** in the control panel (or `astra-arena doctor`) first. It 
 | Lost the organiser link | | The control panel shows it under Links |
 | A student forgot their password | | Students use **Forgot password** (USN + name + date of birth), or Participants → reset |
 | Wrong times on competitions | Clock or timezone | Settings → Date & Time → automatic; APP_TIMEZONE in `/etc/astra-arena.env` |
-| Need to move to a new PC | | Install on the new PC, then Database → **Upload backup** and restore |
+| Need to move to a new PC | | Section 8: create a move package, install the new PC with it, remove the old one |
 
-## 9. Files and commands
+## 10. Files and commands
 
 | What | Where |
 |---|---|

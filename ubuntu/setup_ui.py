@@ -20,8 +20,9 @@ INSTALL = HERE / "install.sh"
 PORT, PANEL = 8764, "http://127.0.0.1:8765/"
 TOKEN = secrets.token_urlsafe(16)
 STEPS = ["Checking this computer", "Installing compilers", "Installing Node.js", "Copying the app", "Installing Python packages",
-         "Installing the local AI model", "Creating the background service", "Keeping the computer awake", "Setting up a fixed network address", "Done"]
-job = {"state": "idle", "log": [], "step": "", "done_steps": 0, "total": 9, "error": "", "password": "", "students": ""}
+         "Installing the local AI model", "Bringing in data from the old computer", "Creating the background service", "Keeping the computer awake", "Setting up a fixed network address", "Done"]
+UPLOAD = Path(f"/tmp/astra-move-upload-{os.getuid()}.zip")
+job = {"state": "idle", "ai": False, "imp": False, "log": [], "step": "", "done_steps": 0, "total": 9, "error": "", "password": "", "students": ""}
 
 
 def panel_up():
@@ -57,9 +58,9 @@ def machine():
             "up_to_date": installed_version() is not None and installed_version() == repo_version()}
 
 
-def run_install(ai):
-    job.update(state="running", log=[], step="Waiting for your password...", done_steps=0, total=10 if ai else 9, error="", password="")
-    cmd = ["pkexec", "/bin/bash", str(INSTALL)] + (["--with-ai"] if ai else [])
+def run_install(ai, imp):
+    job.update(state="running", ai=ai, imp=imp, log=[], step="Waiting for your password...", done_steps=0, total=9 + ai + imp, error="", password="")
+    cmd = ["pkexec", "/bin/bash", str(INSTALL)] + (["--with-ai"] if ai else []) + (["--import", str(UPLOAD)] if imp else [])
     if os.geteuid() == 0:
         cmd = cmd[1:]
     try:
@@ -105,18 +106,21 @@ label{display:block;margin:6px 0 18px}.row{display:flex;gap:10px;align-items:cen
 <script>
 const T='__TOKEN__',$=s=>document.querySelector(s),STEPS=__STEPS__;let M,open=false;
 const esc=s=>String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-async function go(){const ai=$('#ai')?.checked;await fetch('/install',{method:'POST',headers:{'X-Token':T,'Content-Type':'application/json'},body:JSON.stringify({ai})});tick()}
+async function go(){const ai=$('#ai')?.checked,f=$('#pkg')?.files[0];
+ if(f){$('#go').disabled=true;$('#go').textContent='Reading the move package...';const r=await (await fetch('/upload',{method:'POST',headers:{'X-Token':T},body:f})).json();if(!r.ok){$('#go').disabled=false;$('#go').textContent='Try again';return alert(r.error)}}
+ await fetch('/install',{method:'POST',headers:{'X-Token':T,'Content-Type':'application/json'},body:JSON.stringify({ai,imp:!!f})});tick()}
 function idle(){const label=!M.installed?'Install ASTRA Code Arena':M.up_to_date?'Repair / reinstall':'Update to this version';
  $('#view').innerHTML=`<div class=cap>With ${M.ram_gb} GB RAM and ${M.cores} cores, this PC handles <b>about ${M.students} students at once</b>, or <b>about ${M.students_ai}</b> with the AI model on.</div>${M.free_gb<20?`<div class=err>Installation needs 20 GB of free disk; this PC has ${M.free_gb} GB. Free some space, then open this again.</div>`:''}
  <p class=muted>${M.installed?'Already installed. Updating keeps every student, question and result.':'One click installs everything it needs: compilers (C, C++, Java, Python, JavaScript), the platform, the background service and the control panel. It needs internet this one time and takes about 5-15 minutes. Ubuntu will ask for your password.'}</p>
  <label><input type=checkbox id=ai ${M.ram_gb>=7?'checked':''}> Also install the AI model (Prompt challenges, AI Studio): about 2 GB download, uses about 1.5 GB RAM</label>
+ <label>Moving from another computer? Choose its move package (astra-move-....zip) to bring every competition, question, student and result:<br><input type=file id=pkg accept=".zip" style="margin-top:6px"></label>
  <div class=row><button class=btn id=go ${M.free_gb<20?'disabled':''}>${label}</button>${M.running?'<a class="btn ghost" href="http://127.0.0.1:8765/">Open control panel</a>':''}</div>`;$('#go').onclick=go}
-function progress(j){const pct=Math.round(100*j.done_steps/j.total),list=STEPS.filter(s=>j.total===10||!s.includes('AI'));
+function progress(j){const pct=Math.round(100*j.done_steps/j.total),list=STEPS.filter(s=>(j.ai||!s.includes('AI'))&&(j.imp||!s.includes('old computer')));
  const cur=list.findIndex(s=>j.step.startsWith(s.split(' ').slice(0,2).join(' ')));
  let h=`<div class=row style="justify-content:space-between"><b>${esc(j.step||'Starting...')}</b><span>${pct}%</span></div><div class=bar><i style="width:${Math.max(pct,3)}%"></i></div>
  <div class="muted" style="font-size:13px;height:20px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${esc(j.log.at(-1)||'')}</div>
  <ul class=steps>${list.map((s,i)=>`<li class="${j.state==='done'||i<cur?'done':i===cur?'now':''}">${j.state==='done'||i<cur?'&#10003;':i===cur?'&#9654;':'&#9675;'} ${s}</li>`).join('')}</ul>`;
- if(j.state==='done')h+=`<div class=ok><b>Installed and running.</b> It starts by itself after every reboot.${j.password?`<br>First admin login: user <code>admin</code>, password <code>${esc(j.password)}</code>. Write it down: you must change it at first sign-in.`:''}${j.students?`<br>Students open: <code>${esc(j.students)}</code>`:''}</div><p><a class=btn href="http://127.0.0.1:8765/">Open control panel</a></p><p class=muted>Next time, open <b>ASTRA Code Arena</b> from the Ubuntu app menu.</p>`;
+ if(j.state==='done')h+=`<div class=ok><b>Installed and running.</b> It starts by itself after every reboot.${j.imp?'<br>All data from the old computer is here. Sign in with the same admin accounts as before.':''}${j.password?`<br>First admin login: user <code>admin</code>, password <code>${esc(j.password)}</code>. Write it down: you must change it at first sign-in.`:''}${j.students?`<br>Students open: <code>${esc(j.students)}</code>`:''}</div><p><a class=btn href="http://127.0.0.1:8765/">Open control panel</a></p><p class=muted>Next time, open <b>ASTRA Code Arena</b> from the Ubuntu app menu.</p>`;
  if(j.state==='failed')h+=`<div class=err><b>Setup stopped.</b> ${esc(j.error)}</div><p class=row><button class=btn id=go>Try again</button></p>`;
  h+=`<p><a href="#" id=det>${open?'Hide':'Show'} details</a></p><pre id=log style="display:${open?'block':'none'}">${esc(j.log.join('\n'))}</pre>`;
  $('#view').innerHTML=h;if($('#go'))$('#go').onclick=()=>{M.installed=true;idle()};$('#det').onclick=e=>{e.preventDefault();open=!open;progress(j)};if(open)$('#log').scrollTop=1e9}
@@ -148,11 +152,23 @@ class H(http.server.BaseHTTPRequestHandler):
         self.send(404, "{}")
 
     def do_POST(self):
-        if self.headers.get("X-Token") != TOKEN or self.path != "/install":
+        if self.headers.get("X-Token") != TOKEN or self.path not in ("/install", "/upload"):
             return self.send(403, "{}")
+        if self.path == "/upload":  # the move package from the old computer, streamed to a private temp file
+            left = int(self.headers.get("Content-Length") or 0)
+            with open(os.open(UPLOAD, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as out:
+                while left > 0:
+                    chunk = self.rfile.read(min(left, 1 << 20))
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    left -= len(chunk)
+            import zipfile
+            ok = zipfile.is_zipfile(UPLOAD) and "manifest.json" in zipfile.ZipFile(UPLOAD).namelist()
+            return self.send(200 if ok else 400, json.dumps({"ok": ok, "error": None if ok else "That file is not an ASTRA Arena move package (astra-move-....zip)."}))
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
         if job["state"] != "running":
-            threading.Thread(target=run_install, args=(bool(body.get("ai")),), daemon=True).start()
+            threading.Thread(target=run_install, args=(bool(body.get("ai")), bool(body.get("imp")) and UPLOAD.exists()), daemon=True).start()
             time.sleep(0.2)
         self.send(200, "{}")
 

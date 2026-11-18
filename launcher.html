@@ -57,6 +57,15 @@ a{color:var(--pri)}code{background:#f0eefc;padding:2px 6px;border-radius:5px}pre
   <div class="row" style="margin-top:10px"><button class="btn" id="backup">Back up now</button><button class="btn red" id="quit">Stop and close</button></div>
   <div class="small muted" style="margin-top:6px">Backups: hourly during a live round, every 6 hours otherwise, 30 kept. If the database is ever damaged it is restored from the newest good backup automatically.</div>
  </section>
+ <section class="card wide"><h3>Move to another computer</h3>
+  <ol class="small" style="margin:0 0 12px;padding-left:18px;line-height:1.7">
+   <li><b>Create a move package</b> here and save it (Downloads or a USB drive). It holds every competition, question, student, result and upload.</li>
+   <li>On the new computer: get the code, run <code>start.sh</code>, choose the package under "Moving from another computer", press Install. Everything is there, sized for that machine.</li>
+   <li><b>Remove</b> this computer as the host. On the same network, the new computer takes over the old address, so the student link stays the same.</li></ol>
+  <div class="row"><button class="btn pri" id="mkpkg">Create move package</button><span id="pkglink" class="small"></span></div>
+  <div class="row" style="margin-top:12px"><label class="small">Bring data in from another computer: <input type="file" id="impf" accept=".zip"></label><button class="btn" id="impBtn">Import</button></div>
+  <div class="row" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)"><label class="small"><input type="checkbox" id="purge"> Also delete all data from this computer (a final package is kept in /var/backups)</label><button class="btn red" id="rmBtn">Remove from this computer</button></div>
+ </section>
  <section class="card wide"><div class="row" style="justify-content:space-between"><div><h3 style="margin:0">Diagnose &amp; fix</h3><div class="small muted">Checks the server, judge, languages, database, backups, disk, memory, network, firewall and clock. Each problem shows its fix.</div></div><button class="btn pri" id="diag">Run checks</button></div><div id="job" class="alert" style="display:none;margin-top:10px"></div><div id="checks"></div></section>
  <section class="card wide"><div class="row" style="justify-content:space-between"><h3>Logs</h3><button class="btn" id="logsBtn">Show</button></div><pre id="logs" style="display:none"></pre></section>
 </div></div><div id="msg"></div></main>
@@ -108,6 +117,13 @@ async function diag(){$('#checks').innerHTML='<div class="small muted" style="pa
  $('#checks').innerHTML=r.map(c=>`<div class="chk"><span class="lv ${c.level}"></span><b>${esc(c.name)}</b><div>${esc(c.detail)}${c.fix?`<div class="small" style="color:${c.level==='err'?'var(--err)':'var(--warn)'}">Fix: ${esc(c.fix)}</div>`:''}</div>${c.action?`<button class="btn" data-act="${c.action}">${ACT[c.action]}</button>`:'<span></span>'}</div>`).join('');
  document.querySelectorAll('[data-act]').forEach(b=>b.onclick=async()=>{b.disabled=true;await post('/api/'+b.dataset.act);setTimeout(diag,b.dataset.act==='install_langs'?1000:4000)})}
 $('#diag').onclick=diag;
+$('#mkpkg').onclick=async()=>{$('#mkpkg').disabled=true;$('#pkglink').textContent='Creating...';const r=await (await fetch('/api/package',{method:'POST',headers:{'X-Token':T}})).json();$('#mkpkg').disabled=false;
+ $('#pkglink').innerHTML=r.url?`Ready: <a href="${r.url}" download>Download ${esc(r.name)}</a> · save it to a USB drive or the new computer`:esc(r.error||'Failed')};
+$('#impBtn').onclick=async()=>{const f=$('#impf').files[0];if(!f)return toast('Choose a move package first');if(!confirm('Replace ALL data on this computer with the data in this package? The current data is backed up first.'))return;
+ toast('Importing... the platform restarts');const r=await (await fetch('/api/import',{method:'POST',headers:{'X-Token':T},body:f})).json();toast(r.error||r.message);load()};
+$('#rmBtn').onclick=async()=>{const purge=$('#purge').checked;if(prompt(`This removes ASTRA Code Arena from this computer${purge?' and DELETES all its data':''}. Students lose access here. A final move package is kept.\n\nType REMOVE to continue:`)!=='REMOVE')return;
+ const r=await (await fetch('/api/remove',{method:'POST',headers:{'X-Token':T,'Content-Type':'application/json'},body:JSON.stringify({confirm:'REMOVE',purge})})).json();
+ document.body.innerHTML=`<main style="padding:60px;text-align:center"><h2>${r.error?'Not removed':'Removing ASTRA Code Arena'}</h2><p>${esc(r.error||r.message)}</p><p class="muted">You can close this window.</p></main>`};
 function mdx(t){const e=s=>esc(s).replace(/`([^`]+)`/g,'<code>$1</code>').replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>').replace(/\[([^\]]+)\]\(([^)]+)\)/g,'<a href="$2" target="_blank">$1</a>');
  let h='',lines=t.split('\n'),i=0;while(i<lines.length){let l=lines[i];
   if(l.startsWith('```')){let b=[];i++;while(i<lines.length&&!lines[i].startsWith('```'))b.push(lines[i++]);h+=`<pre>${esc(b.join('\n'))}</pre>`;i++;continue}
