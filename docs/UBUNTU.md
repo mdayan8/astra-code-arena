@@ -177,6 +177,11 @@ When a new version is pushed to GitHub, every installed PC picks it up by itself
 
 The Updates card shows the current version, the last check, and the result of the last update. Switch automatic updates off there to update only by hand (**Update now**, or `astra-arena update` in a terminal).
 
+**Only signed updates are installed.** Every release commit is signed with the release key, which exists only on the maintainer's computer (`~/.ssh/astra_release_signing`). Each installed PC checks the signature against the trusted key list in its own installed copy (`ubuntu/allowed_signers`), never against the download. So even if someone got into the GitHub account, or published a copy of the code, the PCs refuse their changes. The Updates card then shows "Update REFUSED" and nothing changes. Python packages are pinned to exact tested versions, and the Node.js download is checked against a fixed checksum.
+
+- **Keep a copy of the release key** (both `astra_release_signing` files) on a USB drive in a safe place. If it is lost, updates stop being accepted until each PC is reinstalled with a new key.
+- **To change the key:** add the new public key to `ubuntu/allowed_signers` in a commit signed with the old key, then start signing with the new one.
+
 **Private repository:** the PC needs read access. In GitHub, create a fine-grained token with read-only "Contents" access to this repository, and paste it under Updates → Access token. A public repository needs nothing.
 
 ## 9. Moving to another computer, or removing it
