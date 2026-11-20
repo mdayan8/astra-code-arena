@@ -175,16 +175,26 @@ class H(http.server.BaseHTTPRequestHandler):
         self.send(200, "{}")
 
 
+def open_window(url):
+    """Its own app window (Chrome-family app mode or the small native window); a browser tab only as a last resort."""
+    try:
+        subprocess.Popen(["/bin/bash", str(HERE / "open_app.sh"), url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        webbrowser.open(url)
+
+
 def main():
-    if installed_version() and installed_version() == repo_version() and panel_up() and "--setup" not in sys.argv:
-        webbrowser.open(PANEL)  # already installed and current: go straight to the control panel
+    # Installed and answering: this is just "open the app". The setup screen is only for a first install or a repair.
+    # (New versions arrive inside the app as a small "Update available" popup.)
+    if installed_version() and panel_up() and "--setup" not in sys.argv:
+        open_window(PANEL)
         return
     try:
         srv = http.server.ThreadingHTTPServer(("127.0.0.1", PORT), H)
     except OSError:  # setup window already open
-        webbrowser.open(f"http://127.0.0.1:{PORT}/")
+        open_window(f"http://127.0.0.1:{PORT}/")
         return
-    threading.Timer(0.6, lambda: webbrowser.open(f"http://127.0.0.1:{PORT}/")).start()
+    threading.Timer(0.6, lambda: open_window(f"http://127.0.0.1:{PORT}/")).start()
     threading.Thread(target=lambda: (time.sleep(6 * 3600), os._exit(0)), daemon=True).start()  # never linger forever
     srv.serve_forever()
 

@@ -1004,6 +1004,13 @@ class Panel(http.server.BaseHTTPRequestHandler):
         self.send(200, json.dumps({"ok": True, "message": msg, "error": run["last_error"]}))
 
 
+def open_window(url):
+    try:
+        subprocess.Popen(["/bin/bash", str(ROOT / "ubuntu" / "open_app.sh"), url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        webbrowser.open(url)
+
+
 def main():
     bg = "--background" in sys.argv
     if "--import" in sys.argv:  # used by the installer: bring data from the old computer
@@ -1024,7 +1031,7 @@ def main():
         srv = http.server.ThreadingHTTPServer(("127.0.0.1", PANEL_PORT), Panel)
     except OSError:  # already running (e.g. as the service): just show it
         if not bg:
-            webbrowser.open(f"http://127.0.0.1:{PANEL_PORT}/")
+            open_window(f"http://127.0.0.1:{PANEL_PORT}/")
         return
     first_admin()
     tf = config.DATA_DIR / "panel.token"
@@ -1036,7 +1043,7 @@ def main():
     if S["running"] and (bg or S["run_on_open"]):
         start()
     if not bg:
-        threading.Timer(0.8, lambda: webbrowser.open(f"http://127.0.0.1:{PANEL_PORT}/")).start()
+        threading.Timer(0.8, lambda: open_window(f"http://127.0.0.1:{PANEL_PORT}/")).start()
     try:
         srv.serve_forever()
     finally:

@@ -42,7 +42,7 @@ The control panel's **This machine** card measures the PC and says how many stud
 4. Enter your Ubuntu password when asked. A progress bar shows every step: checking the computer, compilers, Node.js, copying the app, Python packages, (AI model), background service, keep awake, done.
 5. At the end it shows the **first admin password** and the student link, plus an **Open control panel** button. Write the password down: you must change it at first sign-in.
 
-Run `start.sh` again any time. If everything is installed and current it opens the control panel. If the folder has a newer version it offers **Update** (all data is kept). If something broke it offers **Repair / reinstall**.
+**The setup screen appears only for the first install.** After that, `start.sh`, the desktop icon and the app-menu icon all just open the app. New versions show up inside the app as a small **Update available** popup (Update now / Later). If the platform ever stops answering, running `start.sh` shows the setup screen again with **Repair / reinstall**; `bash start.sh --setup` forces it.
 
 Without a desktop (Ubuntu Server), run `sudo ./ubuntu/install.sh` (add `--with-ai` for the AI model) instead.
 
@@ -53,11 +53,11 @@ The installer:
 - opens port 8000 in the firewall;
 - stops the PC from sleeping (a sleeping PC disconnects every student).
 
-**To update later:** `git pull` (or download the new ZIP) and run `start.sh` again, then press **Update**. Your data, students and results are kept.
+**To update later:** nothing to do. The app checks by itself every 30 minutes and shows a small **Update available** popup; press **Update now**, or let it install by itself when no round is running. Your data, students and results are kept.
 
 ## 4. Navigating the control panel
 
-Open **ASTRA Code Arena** from the app menu (purple hexagon icon). It opens in its own window when Chrome or Chromium is installed, otherwise in a browser tab.
+Open **ASTRA Code Arena** from the app menu (purple hexagon icon). It opens as its own app window with its own icon, with no tabs and no address bar: through Chrome, Chromium, Edge or Brave in app mode when one is installed, otherwise through a small built-in window. A normal browser tab is used only if neither is available.
 
 **This app only runs and manages the server** (start, stop, network, backups, updates). Competitions, questions and students are managed in the separate **organiser site**, with separate accounts.
 

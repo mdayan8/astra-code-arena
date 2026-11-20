@@ -36,6 +36,8 @@ pre{background:#101018;color:#d8d8e6;padding:12px;border-radius:12px;max-height:
 .chk{display:grid;grid-template-columns:22px 200px 1fr auto;gap:10px;align-items:start;padding:11px 0;border-bottom:1px solid var(--line)}.chk:last-child{border-bottom:0}
 .lv{width:12px;height:12px;border-radius:50%;margin-top:5px}.lv.ok{background:var(--ok)}.lv.warn{background:#e0a100}.lv.err{background:var(--err)}
 .prose{padding:26px 32px}.prose h1{font-size:22px}.prose h2{font-size:17px;margin-top:28px;border-bottom:1px solid var(--line);padding-bottom:6px}.prose h3{font-size:15px;margin-top:18px}.prose table{border-collapse:collapse;width:100%;margin:10px 0}.prose td,.prose th{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}.prose th{background:var(--soft)}.prose pre{background:var(--soft);color:var(--text)}
+#upd{position:fixed;right:22px;bottom:22px;width:340px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px 18px;box-shadow:0 18px 50px #0003;z-index:40;display:none}
+#upd b{font-size:14.5px}#upd p{margin:4px 0 12px;color:var(--muted);font-size:13px}#upd .row{justify-content:flex-end}
 #msg{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:#15151c;color:#fff;padding:11px 18px;border-radius:12px;display:none;box-shadow:0 10px 30px #0004;z-index:50;max-width:80vw}
 /* hero: the one thing this app is for */
 .hero{grid-column:1/-1;position:relative;overflow:hidden;border-radius:22px;padding:28px 30px;color:#fff;background:radial-gradient(120% 140% at 0% 0%,#7c5cff 0%,#4c2fd6 45%,#23124f 100%);box-shadow:0 18px 50px #4c2fd633;display:flex;gap:26px;align-items:center}
@@ -114,7 +116,7 @@ pre{background:#101018;color:#d8d8e6;padding:12px;border-radius:12px;max-height:
  </section>
  <section class="card wide"><div class="row" style="justify-content:space-between"><div><h3 style="margin:0">Diagnose &amp; fix</h3><div class="small muted">Checks the server, judge, languages, database, backups, disk, memory, network, firewall and clock. Each problem shows its fix.</div></div><button class="btn pri" id="diag">Run checks</button></div><div id="job" class="alert" style="display:none;margin-top:10px"></div><div id="checks"></div></section>
  <section class="card wide"><div class="row" style="justify-content:space-between"><h3>Logs</h3><button class="btn" id="logsBtn">Show</button></div><pre id="logs" style="display:none"></pre></section>
-</div></div></main><div id="msg"></div>
+</div></div></main><div id="upd"></div><div id="msg"></div>
 <script>
 const T='__TOKEN__',$=s=>document.querySelector(s),DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 let st=null,wins=null,formInit=false;
@@ -177,7 +179,17 @@ $('#admReset').onclick=async()=>{const u=$('#admSel').value;if(!confirm(`Give "$
  $('#admOut').style.display='block';$('#admOut').innerHTML=r.error?esc(r.error):`Temporary password for <b>${esc(r.username)}</b>: <code>${esc(r.password)}</code>. They sign in on the organiser site and must choose a new one.`};
 $('#chpw').onclick=async()=>{const current=prompt('Current app password:');if(current===null)return;const nw=prompt('New app password (8 or more characters):');if(!nw)return;post('/api/change-password',{current,new:nw})};
 const ago=t=>{const m=Math.round((Date.now()/1000-t)/60);return m<1?'just now':m<60?m+' min ago':Math.round(m/60)+' h ago'};
-function drawUpd(u){$('#updAuto').checked=!!u.auto;$('#updTok').placeholder=u.token_set?'saved (hidden)':'github_pat_...';
+let updLater=false,updBusy=false;
+function updPopup(u){const el=$('#upd');
+ if(updBusy){el.style.display='block';el.innerHTML='<b>Updating...</b><p>A backup was taken. The app restarts for a few seconds and this window refreshes by itself.</p>';return}
+ if(!u.available||updLater||(u.last_result&&u.last_result.ok===false&&(u.note||'').includes('failed to start'))){el.style.display='none';return}
+ el.style.display='block';el.innerHTML=`<b>Update available</b><p>${u.note&&u.note.startsWith('waiting')?'It installs by itself after the round. ':u.auto?'It installs by itself when no round is running, or now if you want. ':''}Your data is kept and backed up first.</p><div class="row"><button class="btn" id="updNo">Later</button><button class="btn pri" id="updYes">Update now</button></div>`;
+ $('#updNo').onclick=()=>{updLater=true;el.style.display='none'};
+ $('#updYes').onclick=async()=>{const before=u.version;updBusy=true;updPopup(u);const r=await (await fetch('/api/update',{method:'POST',headers:{'X-Token':T,'Content-Type':'application/json'},body:JSON.stringify({apply:true})})).json();
+  if(!/Installing/.test(r.message||'')){updBusy=false;updLater=true;el.style.display='none';return alert(r.error||r.message)}
+  const t=setInterval(async()=>{try{const p=await (await fetch('/api/ping')).json();if(p.version&&!p.version.startsWith(before)){clearInterval(t);location.reload()}}catch(e){}},3000);
+  setTimeout(()=>{clearInterval(t);location.reload()},240000)}}
+function drawUpd(u){updPopup(u);$('#updAuto').checked=!!u.auto;$('#updTok').placeholder=u.token_set?'saved (hidden)':'github_pat_...';
  const lr=u.last_result;$('#updInfo').innerHTML=`Version <code>${esc(u.version||'unknown')}</code>${u.checked_at?` · checked ${ago(u.checked_at)}`:''}${u.error?` · <span style="color:var(--err)">${esc(u.error)}</span>`:u.available?` · <b>new version ${esc(u.latest)} available</b>`:u.checked_at?' · up to date':''}${u.note?` · ${esc(u.note)}`:''}${lr?`<br>Last update: ${esc(lr.message)} (${ago(lr.at)})`:''}`;
  $('#updApply').style.display=u.available?'':'none'}
 $('#updCheck').onclick=()=>post('/api/update',{});
@@ -201,5 +213,6 @@ function mdx(t){const e=s=>esc(s).replace(/`([^`]+)`/g,'<code>$1</code>').replac
   else if(l.trim())h+=`<p>${e(l)}</p>`;i++}return h}
 document.querySelectorAll('.tab').forEach(b=>b.onclick=async()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x===b));const g=b.dataset.tab==='guide';$('#ctl').style.display=g?'none':'';$('#guide').style.display=g?'block':'none';if(g&&!$('#guide').innerHTML)$('#guide').innerHTML=mdx(await (await fetch('/api/guide')).text())});
 $('#logsBtn').onclick=async()=>{const l=await (await fetch('/api/logs')).json();$('#logs').style.display='block';$('#logs').textContent=`--- web ---\n${l.web}\n--- judge ---\n${l.judge}`};
-load();setInterval(()=>load().catch(()=>{}),5000);
+load().then(()=>{if(st&&st.update&&st.update.auto&&!(Date.now()/1000-(st.update.checked_at||0)<600))fetch('/api/update',{method:'POST',headers:{'X-Token':T,'Content-Type':'application/json'},body:'{}'}).then(()=>load()).catch(()=>{})});
+setInterval(()=>load().catch(()=>{}),5000);
 </script></body></html>

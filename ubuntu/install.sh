@@ -106,6 +106,11 @@ if [ -z "$UPDATE" ] || ! have_tools; then
     for p in $PKGS; do $APT install "$p" || echo "  could not install $p"; done
   fi
 fi
+# for the app's own window on PCs without Chrome/Chromium (optional: a browser tab is the fallback)
+if [ -z "$UPDATE" ] && ! command -v google-chrome google-chrome-stable chromium chromium-browser microsoft-edge >/dev/null 2>&1; then
+  $APT install python3-gi gir1.2-gtk-3.0 >/dev/null 2>&1 || true
+  $APT install gir1.2-webkit2-4.1 >/dev/null 2>&1 || $APT install gir1.2-webkit2-4.0 >/dev/null 2>&1 || true
+fi
 command -v python3 >/dev/null && python3 -c 'import venv, ensurepip' 2>/dev/null \
   || die "Python could not be installed. Connect this PC to the internet (the Ubuntu servers must be reachable) and press Try again."
 python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' \
@@ -226,11 +231,7 @@ URL=http://127.0.0.1:8765/
 tok() { sudo cat /var/lib/astra-arena/panel.token 2>/dev/null; }
 py() { sudo bash -c "set -a; . /etc/astra-arena.env; cd /opt/astra-arena && .venv/bin/python $*"; }
 case "${1:-open}" in
-  open)   # its own app window when Chrome/Chromium/Edge is installed, otherwise a browser tab
-    for b in google-chrome google-chrome-stable chromium chromium-browser microsoft-edge; do
-      command -v "$b" >/dev/null && { "$b" --app="$URL" --class=astra-arena --window-size=1180,860 >/dev/null 2>&1 & exit 0; }
-    done
-    xdg-open "$URL" >/dev/null 2>&1 || echo "Open $URL in a browser on this computer." ;;
+  open) /opt/astra-arena/ubuntu/open_app.sh "$URL" ;;   # its own app window, not a browser tab
   status) systemctl status astra-arena --no-pager ;;
   start|stop|restart) sudo systemctl "$1" astra-arena ;;
   logs) sudo journalctl -u astra-arena -n 100 --no-pager; sudo tail -n 60 /var/lib/astra-arena/logs/*.log ;;
