@@ -74,7 +74,12 @@ def sh(*cmd, timeout=20):
         return 1, str(e)
 
 
+_ips = {"at": 0.0, "v": []}
+
+
 def lan_ips():
+    if time.time() - _ips["at"] < 4:
+        return _ips["v"]
     ips = set()
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
@@ -85,7 +90,8 @@ def lan_ips():
     code, out = sh("hostname", "-I")
     if code == 0:
         ips.update(x for x in out.split() if "." in x)
-    return sorted(i for i in ips if not i.startswith(("127.", "172.17.")))
+    _ips.update(at=time.time(), v=sorted(i for i in ips if not i.startswith(("127.", "172.17."))))
+    return _ips["v"]
 
 
 # ---------- fixed address: the student link never changes, even if DHCP gives this PC a new address ----------

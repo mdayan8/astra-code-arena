@@ -8,11 +8,11 @@ HERE="$(dirname "$(readlink -f "$0")")"
 LOG="${XDG_CACHE_HOME:-$HOME/.cache}/astra-arena-app.log"
 mkdir -p "$(dirname "$LOG")" 2>/dev/null
 
-if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && { python3 -c 'import gi; gi.require_version("Gtk", "3.0"); gi.require_version("WebKit2", "4.1")' 2>/dev/null \
-   || python3 -c 'import gi; gi.require_version("Gtk", "3.0"); gi.require_version("WebKit2", "4.0")' 2>/dev/null; }; then
+if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v python3 >/dev/null; then
+  # Start it straight away. If the window component is missing it exits at once with an error and we fall through.
   nohup python3 "$HERE/appwindow.py" "$URL" >"$LOG" 2>&1 &
   pid=$!
-  for _ in 1 2 3 4 5 6; do   # 3 seconds: still running = window is up; exit 0 = an existing window was brought to the front
+  for _ in 1 2 3 4; do   # 2 seconds: still running = window is up; exit 0 = the existing window was brought to the front
     sleep 0.5
     kill -0 "$pid" 2>/dev/null || { wait "$pid"; [ $? -eq 0 ] && exit 0; break; }
   done

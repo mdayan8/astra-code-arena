@@ -214,5 +214,6 @@ function mdx(t){const e=s=>esc(s).replace(/`([^`]+)`/g,'<code>$1</code>').replac
 document.querySelectorAll('.tab').forEach(b=>b.onclick=async()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x===b));const g=b.dataset.tab==='guide';$('#ctl').style.display=g?'none':'';$('#guide').style.display=g?'block':'none';if(g&&!$('#guide').innerHTML)$('#guide').innerHTML=mdx(await (await fetch('/api/guide')).text())});
 $('#logsBtn').onclick=async()=>{const l=await (await fetch('/api/logs')).json();$('#logs').style.display='block';$('#logs').textContent=`--- web ---\n${l.web}\n--- judge ---\n${l.judge}`};
 load().then(()=>{if(st&&st.update&&st.update.auto&&!(Date.now()/1000-(st.update.checked_at||0)<600))fetch('/api/update',{method:'POST',headers:{'X-Token':T,'Content-Type':'application/json'},body:'{}'}).then(()=>load()).catch(()=>{})});
-setInterval(()=>load().catch(()=>{}),5000);
+setInterval(()=>{if(!document.hidden)load().catch(()=>{})},5000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)load().catch(()=>{})});
 </script></body></html>
