@@ -57,11 +57,19 @@ The installer:
 
 ## 4. Navigating the control panel
 
-Open **ASTRA Code Arena** from the app menu (purple hexagon icon). It opens in its own window when Chrome or Chromium is installed, otherwise in a browser tab. **Sign in with the Super Admin account**: the same username and password as the organiser site (the first password is shown at the end of the installation). Five wrong passwords lock sign-in for a minute. Forgot it? Run `astra-arena reset-password` in a terminal on that PC.
+Open **ASTRA Code Arena** from the app menu (purple hexagon icon). It opens in its own window when Chrome or Chromium is installed, otherwise in a browser tab.
+
+**This app only runs and manages the server** (start, stop, network, backups, updates). Competitions, questions and students are managed in the separate **organiser site**, with separate accounts.
+
+- **First open:** create the app password (8 or more characters). It belongs to this app only.
+- **Forgot the app password:** right-click the app icon → **Reset app password** (asks for the Ubuntu password), or run `astra-arena reset-panel-password`. Then create a new one. Nothing else changes.
+- **An organiser forgot their password:** in the app, Links → **Organiser forgot their password?** → pick the account → **Give a temporary password**. They sign in with it and must choose a new one.
+- Five wrong passwords lock sign-in for a minute.
 
 | Card | What it does |
 |---|---|
 | Top bar | **Running** (green), **Starting / recovering** (amber) or **Stopped** (grey) |
+| Open to the college network | One button. **Open**: binds to the network, opens the firewall port, sets the fixed address and tests that the site answers. **Close**: only this computer can open it |
 | Run / Stop / Restart | Start or stop the platform. If you press Stop, it stays stopped after a reboot until you press Run again |
 | Links to share | **Students** link: share with everyone. **Organisers (private)** link: give only to staff. First admin password until you click "I saved it" |
 | This machine | Cores, RAM, free disk, live CPU and memory use, and how many students it comfortably serves |
@@ -103,6 +111,12 @@ Open the **Organisers** link from the control panel and sign in. The menu:
 4. Open the competition and use **Student link → Copy**. Share it on WhatsApp or the classroom board. Eligible students who open it land on that round.
 
 Create one competition per year group (for example "1st year: Basics", "3rd year: DSA"). They can all run at the same time.
+
+### Creating questions with AI
+
+Organiser site → **AI Studio**: type what you want in one box (for example "an easy array question for 1st years about finding the second largest number") and the AI writes the statement, a reference solution and test cases, runs them in the sandbox, and saves a validated draft for you to review and approve. **Question Import** does the same from PDFs, Word files or photos of a question paper.
+
+This needs the AI model. If you did not tick it during setup: app → **Diagnose & fix** → Prompt challenges (AI) → **Install AI model** (about 1 GB download, uses about 1.5 GB RAM). Progress shows in the app, and it switches on by itself when done.
 
 ### Challenge types (Question Bank → Question type)
 
@@ -220,7 +234,8 @@ Run **Diagnose & fix** in the control panel (or `astra-arena doctor`) first. It 
 | Prompt challenges show "Internal error" | AI model not running | `sudo systemctl restart ollama`; check that AI_* is set in `/etc/astra-arena.env` |
 | Slow verdicts with many students | Not enough judge workers | Network → Judge workers +1 (watch Memory), or close other programs |
 | Update failed / "Cannot reach GitHub" | No internet, or a private repository without a token | Connect to the internet, or add the token under Updates |
-| Forgot the admin password | | `astra-arena reset-password` (asks you to type a new password) |
+| Forgot the app password | | Right-click the app icon → **Reset app password**, or `astra-arena reset-panel-password` |
+| An organiser forgot their password | | App → Links → **Give a temporary password** (or `astra-arena reset-password USER`) |
 | Lost the organiser link | | The control panel shows it under Links |
 | A student forgot their password | | Students use **Forgot password** (USN + name + date of birth), or Participants → reset |
 | Wrong times on competitions | Clock or timezone | Settings → Date & Time → automatic; APP_TIMEZONE in `/etc/astra-arena.env` |

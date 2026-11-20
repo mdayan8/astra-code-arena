@@ -39,7 +39,8 @@ UPDATE_REPO = os.environ.get("UPDATE_REPO") or "https://github.com/mdayan8/astra
 UPDATE_BRANCH = os.environ.get("UPDATE_BRANCH") or "main"
 UPD_DIR = config.DATA_DIR / "update-src"
 UPD_STATUS = config.DATA_DIR / "update-status.json"  # written by install.sh --update (result, rollback)
-DEFAULT = {"auto_update": True, "update_token": "", "port": 8000, "bind": "0.0.0.0", "workers": None, "run_on_open": True, "running": True, "backup_mirror": "", "first_password": None, "auto_ip": True, "fixed_ip": None}
+RESET_F = config.DATA_DIR / "panel.reset"   # created (as root) by "astra-arena reset-panel-password": forget the app password
+DEFAULT = {"panel_pw": None, "auto_update": True, "update_token": "", "port": 8000, "bind": "0.0.0.0", "workers": None, "run_on_open": True, "running": True, "backup_mirror": "", "first_password": None, "auto_ip": True, "fixed_ip": None}
 APT = {"c": "gcc", "cpp": "g++", "python": "python3", "java": "default-jdk-headless", "javascript": "nodejs", "go": "golang-go", "rust": "rustc"}
 PARTS = (("web", "app.main"), ("judge", "app.worker"))
 
@@ -471,7 +472,7 @@ def status():
     open_, nxt = hostinfo.schedule_state(sched)
     up = {n: p.poll() is None for n, p in procs.items()}
     return {"running": bool(procs) and all(up.values()), "wanted": run["wanted"], "uptime": int(time.time() - run["started_at"]) if run["started_at"] else 0,
-            "restarts": run["restarts"], "last_error": run["last_error"], "job": run["job"], "settings": {k: v for k, v in S.items() if k != "update_token"}, "specs": hostinfo.specs(), "usage": hostinfo.usage(),
+            "restarts": run["restarts"], "last_error": run["last_error"], "job": run["job"], "settings": {k: v for k, v in S.items() if k not in ("update_token", "panel_pw")}, "admins": admin_names(), "shared": S["bind"] != "127.0.0.1", "specs": hostinfo.specs(), "usage": hostinfo.usage(),
             "ips": lan_ips(), "student_url": base_url() + "/", "admin_url": f"{base_url()}/{admin_route()}/",
             "schedule": sched, "open_now": open_ or bool(live), "next_open": nxt.strftime("%a %d %b %I:%M %p") if nxt else None,
             "live": [x["title"] for x in live], "signed_in_last_hour": online, "alerts": sysst["alerts"], "autostart": autostart_on(), "is_root": IS_ROOT,
@@ -546,7 +547,7 @@ def diagnose():
         "Install them (needs internet once)." if miss else "", "install_langs" if miss else None)
     add("Prompt challenges (AI)", "ok" if langs.get("prompt") else "warn",
         "AI model configured." if langs.get("prompt") else "No AI model configured, so Prompt challenges are unavailable (everything else works).",
-        "" if langs.get("prompt") else "sudo ./ubuntu/install.sh --with-ai")
+        "" if langs.get("prompt") else "Install the AI model (about 1 GB download, uses about 1.5 GB RAM).", None if langs.get("prompt") else "install_ai")
     add("Student code sandbox", "ok" if judge.IS_ROOT or IS_ROOT else "warn", judge.sandbox_mode(),
         "" if IS_ROOT else "Run as the installed service (sudo systemctl start astra-arena) so each student program gets its own user and no network.")
     healthy = db._healthy(config.DB_PATH)
@@ -580,36 +581,160 @@ def diagnose():
 # ---------- panel ----------
 LOGIN_PAGE = """<!doctype html><html><head><meta charset=utf-8><title>ASTRA Code Arena · Sign in</title><link rel=icon href=/img/arena-logo.svg>
 <style>body{margin:0;font:15px/1.5 system-ui,Ubuntu,sans-serif;background:radial-gradient(circle at 30% 10%,#efeaff,#f6f6fa 60%);color:#16161d;display:grid;place-items:center;min-height:100vh}
-form{background:#fff;border:1px solid #e4e4ee;border-radius:18px;padding:34px;width:360px;box-shadow:0 20px 50px #2a1a6a14;text-align:center}img{width:64px}h1{font-size:20px;margin:12px 0 2px}
+form{background:#fff;border:1px solid #e4e4ee;border-radius:18px;padding:34px;width:380px;box-shadow:0 20px 50px #2a1a6a14;text-align:center}img{width:64px}h1{font-size:20px;margin:12px 0 2px}
 p{color:#666a78;margin:0 0 20px;font-size:13.5px}input{width:100%;box-sizing:border-box;font:inherit;padding:11px 12px;border:1px solid #dcdbe8;border-radius:10px;margin-bottom:10px}
 input:focus{outline:2px solid #6d4aff33;border-color:#6d4aff}button{width:100%;border:0;border-radius:10px;padding:12px;font:inherit;font-weight:600;background:#6d4aff;color:#fff;cursor:pointer}
-#e{color:#c0283a;font-size:13px;min-height:20px;margin-top:10px}small{display:block;color:#9a9db0;margin-top:14px;font-size:12px}</style></head><body>
-<form id=f><img src=/img/arena-logo.svg alt=""><h1>ASTRA Code Arena</h1><p>Control panel · sign in with the Super Admin account</p>
-<input name=u placeholder=Username value=admin autocomplete=username required><input name=p type=password placeholder=Password autocomplete=current-password required autofocus>
-<button>Sign in</button><div id=e></div><small>Forgot it? In a terminal on this computer: astra-arena reset-password</small></form>
-<script>f.onsubmit=async e=>{e.preventDefault();const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:f.u.value,password:f.p.value})});
+#e{color:#c0283a;font-size:13px;min-height:20px;margin-top:10px}a{color:#6d4aff;font-size:13px;cursor:pointer}#help{display:none;text-align:left;background:#f3f2fa;border-radius:10px;padding:12px;font-size:13px;margin-top:12px}
+code{background:#fff;padding:1px 5px;border-radius:4px}</style></head><body>
+<form id=f><img src=/img/arena-logo.svg alt=""><h1>ASTRA Code Arena</h1><p>__INTRO__</p>
+<input name=p type=password placeholder="__PH__" autocomplete="__AC__" minlength=__MIN__ required autofocus>__SECOND__
+<button>__BTN__</button><div id=e></div><a id=fg>Forgot the password?</a>
+<div id=help><b>Reset it with your Ubuntu password:</b><br>1. Open the app menu, right-click <b>ASTRA Code Arena</b>, choose <b>Reset app password</b>.<br>2. Or in a terminal: <code>astra-arena reset-panel-password</code><br>Then open this app again and create a new password. Nothing else is changed.</div></form>
+<script>const MODE='__MODE__';fg.onclick=()=>help.style.display='block';if(MODE==='create')fg.style.display='none';
+f.onsubmit=async e=>{e.preventDefault();if(MODE==='create'&&f.p.value!==f.p2.value)return document.getElementById('e').textContent='The two passwords are not the same.';
+const r=await fetch(MODE==='create'?'/api/setup-password':'/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:f.p.value})});
 if(r.ok)return location.reload();document.getElementById('e').textContent=(await r.json()).error||'Sign-in failed'}</script></body></html>"""
 
 
-def panel_login(username, password):
-    """Same account as the organiser site: Super Admins only. 5 wrong tries lock sign-in for a minute."""
+def login_page():
+    check_reset()
+    create = not S.get("panel_pw")
+    t = LOGIN_PAGE.replace("__MODE__", "create" if create else "login")
+    t = t.replace("__INTRO__", "Create a password for this control panel. It is only for running the server on this computer; organisers use their own accounts on the organiser site."
+                  if create else "Control panel · enter the app password")
+    t = t.replace("__PH__", "New password (8 or more characters)" if create else "App password").replace("__AC__", "new-password" if create else "current-password")
+    t = t.replace("__MIN__", "8" if create else "1").replace("__BTN__", "Create password and open" if create else "Open control panel")
+    return t.replace("__SECOND__", '<input name=p2 type=password placeholder="Type it again" autocomplete="new-password" required>' if create else "")
+
+
+def check_reset():
+    """`astra-arena reset-panel-password` (needs the Ubuntu password) drops this file: forget the app password."""
+    if RESET_F.exists():
+        RESET_F.unlink(missing_ok=True)
+        S["panel_pw"] = None
+        SESSIONS.clear()
+        save()
+
+
+def new_session():
+    sid = secrets.token_urlsafe(24)
+    SESSIONS[sid] = time.time() + 12 * 3600
+    return sid
+
+
+def set_panel_password(pw):
+    if len(pw or "") < 8:
+        return "Use at least 8 characters."
+    from app.security import hash_password
+    S["panel_pw"] = hash_password(pw)
+    save()
+    return None
+
+
+def panel_login(password):
+    """The app's own password (not an organiser account). 5 wrong tries lock sign-in for a minute."""
+    check_reset()
+    if not S.get("panel_pw"):
+        return None, "No password is set yet. Reload this page to create one."
     if time.time() < FAILS["until"]:
         return None, f"Too many wrong passwords. Try again in {int(FAILS['until'] - time.time()) + 1} s."
     from app.security import verify_password
-    c = db.connect()
-    try:
-        u = db.one(c, "SELECT password_hash FROM users WHERE username=? AND kind='admin' AND role='super_admin' AND status='active'", (username or "").strip())
-    finally:
-        c.close()
-    if u and verify_password(password or "", u["password_hash"]):
+    if verify_password(password or "", S["panel_pw"]):
         FAILS.update(n=0, until=0)
-        sid = secrets.token_urlsafe(24)
-        SESSIONS[sid] = time.time() + 12 * 3600
-        return sid, None
+        return new_session(), None
     FAILS["n"] += 1
     if FAILS["n"] >= 5:
         FAILS.update(n=0, until=time.time() + 60)
-    return None, "Wrong username or password (Super Admin account)."
+    return None, "Wrong password."
+
+
+def reset_admin(username):
+    """Organiser forgot their password: give that admin account a temporary one (they must change it at sign-in)."""
+    from app.security import hash_password
+    c = db.connect()
+    try:
+        u = db.one(c, "SELECT id FROM users WHERE username=? AND kind='admin'", (username or "").strip())
+        if not u:
+            return None
+        pw = secrets.token_urlsafe(9)
+        c.execute("UPDATE users SET password_hash=?, must_change_pw=1, failed_logins=0, locked_until=0, status='active' WHERE id=?", (hash_password(pw), u["id"]))
+        c.execute("DELETE FROM sessions WHERE user_id=?", (u["id"],))
+        return pw
+    finally:
+        c.close()
+
+
+def admin_names():
+    c = db.connect()
+    try:
+        return [r["username"] for r in db.all_(c, "SELECT username FROM users WHERE kind='admin' ORDER BY role='super_admin' DESC, username")]
+    finally:
+        c.close()
+
+
+# ---------- one button: students on the college network can connect, or only this computer ----------
+def lan_test():
+    """Does the student site answer on this PC's network addresses? (A firewall between buildings can still block it.)"""
+    out = []
+    for ip in lan_ips():
+        try:
+            urllib.request.urlopen(f"http://{ip}:{S['port']}/api/health", timeout=3).read()
+            out.append({"ip": ip, "ok": True})
+        except Exception:
+            out.append({"ip": ip, "ok": False})
+    return out
+
+
+def share(on):
+    S["bind"] = "0.0.0.0" if on else "127.0.0.1"
+    save()
+    if on:
+        fw = firewall()
+        try:
+            ensure_fixed_ip()
+        except Exception:
+            pass
+    elif IS_ROOT and shutil.which("ufw"):
+        sh("ufw", "delete", "allow", f"{S['port']}/tcp")
+    stop(remember=False)
+    start()
+    if not on:
+        return "Closed to the network: only this computer can open the student site now."
+    for _ in range(15):  # wait for the web server, then look from the network side
+        time.sleep(1)
+        res = lan_test()
+        if res and all(r["ok"] for r in res):
+            break
+    good = [r["ip"] for r in lan_test() if r["ok"]]
+    if not lan_ips():
+        return "Sharing is on, but this computer is not connected to any network. Plug in the LAN cable."
+    if not good:
+        return "Sharing is on, but the student site is not answering yet. Run Diagnose & fix."
+    note = "" if fw in ("ok", "No ufw firewall on this machine: nothing to open.") else f" Firewall: {fw}"
+    return f"Open to the college network. Students on the LAN open {base_url()}/ . Test it once from another PC.{note}"
+
+
+def install_ai():
+    """One click: install the AI model in the background (outside this service, because it restarts the service at the end)."""
+    if not IS_ROOT or not Path("/opt/astra-arena/ubuntu/install.sh").exists():
+        return "Run in a terminal: sudo ./ubuntu/install.sh --with-ai"
+    log = LOGS / "ai-install.log"
+    log.write_text("")
+    sh("systemd-run", "--unit", f"astra-ai-{int(time.time())}", "--collect", "/bin/bash", "-c", f"/bin/bash /opt/astra-arena/ubuntu/install.sh --ai-only > {log} 2>&1")
+
+    def watch():
+        for _ in range(1800):
+            time.sleep(2)
+            lines = [l for l in log.read_text(errors="replace").replace("\r", "\n").splitlines() if l.strip()]
+            if not lines:
+                continue
+            if lines[-1].startswith("##AI-DONE"):
+                run["job"] = "AI model installed. Restarting..." if "ok" in lines[-1] else "The AI model could not be installed (slow or blocked download). Everything else works. Try again later."
+                return
+            run["job"] = "Installing the AI model (about 1 GB, a few minutes): " + lines[-1][-110:]
+    run["job"] = "Installing the AI model..."
+    threading.Thread(target=watch, daemon=True).start()
+    return "Installing the AI model in the background. This page shows the progress."
 
 
 class Panel(http.server.BaseHTTPRequestHandler):
@@ -644,7 +769,7 @@ class Panel(http.server.BaseHTTPRequestHandler):
             f = ROOT / "static" / "img" / Path(path).name
             return self.send(200, f.read_bytes(), "image/svg+xml" if f.suffix == ".svg" else "image/png") if f.is_file() else self.send(404, "{}")
         if not self.authed():
-            return self.send(200, LOGIN_PAGE, "text/html; charset=utf-8") if path == "/" else self.send(401, '{"error":"Sign in first."}')
+            return self.send(200, login_page(), "text/html; charset=utf-8") if path == "/" else self.send(401, '{"error":"Sign in first."}')
         if path == "/":
             return self.send(200, (ROOT / "launcher.html").read_text().replace("__TOKEN__", TOKEN), "text/html; charset=utf-8")
         if path == "/api/status":
@@ -677,11 +802,22 @@ class Panel(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         if not self.same_origin():  # other web pages cannot drive the panel
             return self.send(403, '{"error":"forbidden"}')
+        if urlparse(self.path).path == "/api/setup-password":  # first open only: nobody has a password yet
+            check_reset()
+            b = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 4096)) or b"{}") if "application/json" in self.headers.get("Content-Type", "") else {}
+            err = "A password already exists. Sign in instead." if S.get("panel_pw") else set_panel_password(b.get("password"))
+            if err:
+                return self.send(400, json.dumps({"error": err}))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Set-Cookie", f"astra_panel={new_session()}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200")
+            self.end_headers()
+            return self.wfile.write(b'{"ok":true}')
         if urlparse(self.path).path == "/api/login":
             if "application/json" not in self.headers.get("Content-Type", ""):
                 return self.send(400, "{}")
             b = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 4096)) or b"{}")
-            sid, err = panel_login(b.get("username"), b.get("password"))
+            sid, err = panel_login(b.get("password"))
             if not sid:
                 return self.send(401, json.dumps({"error": err}))
             self.send_response(200)
@@ -771,6 +907,23 @@ class Panel(http.server.BaseHTTPRequestHandler):
             save()
             st = check_update(apply=bool(body.get("apply")))
             msg = st.get("error") or st.get("note") or ("An update is available." if st.get("available") else "You have the latest version.")
+        elif path == "/api/change-password":
+            from app.security import verify_password
+            if not verify_password(str(body.get("current") or ""), S.get("panel_pw") or ""):
+                return self.send(400, '{"error":"The current password is wrong."}')
+            err = set_panel_password(body.get("new"))
+            if err:
+                return self.send(400, json.dumps({"error": err}))
+            msg = "App password changed."
+        elif path == "/api/reset-admin":
+            pw = reset_admin(body.get("username"))
+            if not pw:
+                return self.send(400, '{"error":"No organiser account with that username."}')
+            return self.send(200, json.dumps({"ok": True, "message": "Temporary password created", "username": body.get("username"), "password": pw}))
+        elif path == "/api/share":
+            msg = share(bool(body.get("on")))
+        elif path == "/api/install_ai":
+            msg = install_ai()
         elif path == "/api/logout":
             SESSIONS.clear()
         elif path == "/api/fixed_ip":

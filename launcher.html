@@ -24,7 +24,7 @@ a{color:var(--pri)}code{background:#f0eefc;padding:2px 6px;border-radius:5px}pre
 .prose{padding:22px 28px;max-width:none}.prose h1{font-size:22px}.prose h2{font-size:17px;margin-top:26px;border-bottom:1px solid var(--line);padding-bottom:4px}.prose h3{font-size:15px;margin-top:16px}.prose table{border-collapse:collapse;width:100%;margin:8px 0}.prose td,.prose th{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}.prose th{background:#f3f2fa}.prose pre{background:#f3f2fa;color:var(--text)}
 #msg{position:fixed;bottom:18px;right:18px;background:#16161d;color:#fff;padding:10px 14px;border-radius:8px;display:none}
 </style></head><body><main>
-<div class="top"><img src="/img/arena-logo.svg" alt=""><div><h1>ASTRA Code Arena</h1><div class="small muted">Control panel · only on this computer</div></div><span class="sp"></span><div class="tabs"><button class="tab on" data-tab="ctl">Control</button><button class="tab" data-tab="guide">Guide &amp; help</button></div><span id="state"></span><button class="btn" id="logout" style="margin-left:8px">Sign out</button></div>
+<div class="top"><img src="/img/arena-logo.svg" alt=""><div><h1>ASTRA Code Arena</h1><div class="small muted">Server control panel · runs and manages the platform on this computer. Competitions and questions are in the organiser site.</div></div><span class="sp"></span><div class="tabs"><button class="tab on" data-tab="ctl">Control</button><button class="tab" data-tab="guide">Guide &amp; help</button></div><span id="state"></span><button class="btn" id="chpw" style="margin-left:8px">Change app password</button><button class="btn" id="logout">Sign out</button></div>
 <div id="guide" class="card prose" style="display:none"></div><div id="ctl">
 <div id="alerts"></div>
 <div class="grid">
@@ -32,10 +32,16 @@ a{color:var(--pri)}code{background:#f0eefc;padding:2px 6px;border-radius:5px}pre
   <div><div id="headline" style="font-size:16px;font-weight:600"></div><div class="small muted" id="sub"></div></div>
   <div class="row"><button class="btn big pri" id="run">Run</button><button class="btn" id="restart">Restart</button></div>
  </section>
+ <section class="card wide row" style="justify-content:space-between" id="shareCard">
+  <div><div id="shareHead" style="font-size:16px;font-weight:600"></div><div class="small muted" id="shareSub"></div></div>
+  <button class="btn big" id="shareBtn"></button>
+ </section>
  <section class="card"><h3>Links to share</h3><dl>
   <dt>Students</dt><dd><a id="surl" target="_blank"></a></dd>
   <dt>Address</dt><dd id="addr" class="small"></dd><dt>Organisers (private)</dt><dd><a id="aurl" target="_blank"></a></dd></dl>
-  <div id="pw" style="display:none;margin-top:12px" class="alert">First admin login: user <code>admin</code>, password <code id="pwv"></code>. You must change it at first sign-in. <button class="btn" id="pwok">I saved it</button></div>
+  <div class="row small" style="margin-top:12px">Organiser forgot their password? <select id="admSel"></select><button class="btn" id="admReset">Give a temporary password</button></div>
+  <div id="admOut" class="alert" style="display:none;margin-top:8px"></div>
+  <div id="pw" style="display:none;margin-top:12px" class="alert">Organiser site first login: user <code>admin</code>, password <code id="pwv"></code>. You must change it at first sign-in. <button class="btn" id="pwok">I saved it</button></div>
  </section>
  <section class="card"><h3>This machine</h3><dl id="mach"></dl></section>
  <section class="card"><h3>Network</h3>
@@ -105,7 +111,7 @@ async function load(){
   $('#bind').innerHTML=[['0.0.0.0','All networks (recommended)'],...st.ips.map(i=>[i,i]),['127.0.0.1','This computer only']].map(([v,t])=>`<option value="${v}" ${v===S.bind?'selected':''}>${t}</option>`).join('');
   $('#port').value=S.port;$('#autoip').checked=S.auto_ip;$('#workers').value=S.workers||'';$('#runopen').checked=S.run_on_open;$('#mirror').value=S.backup_mirror||'';
   $('#schOn').checked=!!st.schedule.enabled;wins=(st.schedule.windows||[]).map(w=>({...w}));drawWins()}
- $('#auto').checked=!!st.autostart;$('#auto').disabled=st.autostart===null;$('#job').style.display=st.job?'block':'none';drawUpd(st.update||{});$('#job').textContent=st.job;
+ $('#auto').checked=!!st.autostart;$('#auto').disabled=st.autostart===null;$('#job').style.display=st.job?'block':'none';drawUpd(st.update||{});S0=S;drawShare();if(!$('#admSel').options.length)$('#admSel').innerHTML=(st.admins||[]).map(a=>`<option>${esc(a)}</option>`).join('');$('#job').textContent=st.job;
 }
 $('#run').onclick=()=>post(st.wanted?'/api/stop':'/api/start');
 $('#restart').onclick=()=>post('/api/restart');
@@ -118,11 +124,20 @@ $('#saveSch').onclick=()=>{if($('#schOn').checked&&!wins.length)return toast('Ad
 $('#backup').onclick=()=>post('/api/backup');
 $('#pwok').onclick=()=>post('/api/forget-password');
 $('#quit').onclick=()=>{if(confirm('Stop the platform and close the control panel? Students will lose access.'))post('/api/quit')};
-const ACT={fixed_ip:'Set up',start:'Run',restart:'Restart',backup:'Back up now',firewall:'Open port',install_langs:'Install'};
+let S0={};const ACT={install_ai:'Install AI model',fixed_ip:'Set up',start:'Run',restart:'Restart',backup:'Back up now',firewall:'Open port',install_langs:'Install'};
 async function diag(){$('#checks').innerHTML='<div class="small muted" style="padding:10px 0">Checking...</div>';const r=await (await fetch('/api/diagnose')).json();
  $('#checks').innerHTML=r.map(c=>`<div class="chk"><span class="lv ${c.level}"></span><b>${esc(c.name)}</b><div>${esc(c.detail)}${c.fix?`<div class="small" style="color:${c.level==='err'?'var(--err)':'var(--warn)'}">Fix: ${esc(c.fix)}</div>`:''}</div>${c.action?`<button class="btn" data-act="${c.action}">${ACT[c.action]}</button>`:'<span></span>'}</div>`).join('');
  document.querySelectorAll('[data-act]').forEach(b=>b.onclick=async()=>{b.disabled=true;await post('/api/'+b.dataset.act);setTimeout(diag,b.dataset.act==='install_langs'?1000:4000)})}
 $('#diag').onclick=diag;
+function drawShare(){const on=st.shared;$('#shareHead').textContent=on?'Open to the college network':'Closed: only this computer can open it';
+ $('#shareSub').innerHTML=on?`Any student on the college LAN or Wi-Fi can open <b>${esc(st.student_url)}</b>${st.ips.length>1?` (also: ${st.ips.filter(i=>!st.student_url.includes(i+':')).map(i=>'http://'+esc(i)+':'+S0.port+'/').join(', ')})`:''}`:'Press the button to let students on the college network connect.';
+ const b=$('#shareBtn');b.textContent=on?'Close to the network':'Open to the college network';b.classList.toggle('pri',!on)}
+$('#shareBtn').onclick=async()=>{const on=!st.shared;if(!on&&!confirm('Close the student site to the network? Students will be disconnected.'))return;
+ $('#shareBtn').disabled=true;$('#shareBtn').textContent=on?'Opening...':'Closing...';const r=await post('/api/share',{on});$('#shareBtn').disabled=false;alert(r.error||r.message)};
+$('#admReset').onclick=async()=>{const u=$('#admSel').value;if(!confirm(`Give "${u}" a temporary password? Their old password stops working.`))return;
+ const r=await (await fetch('/api/reset-admin',{method:'POST',headers:{'X-Token':T,'Content-Type':'application/json'},body:JSON.stringify({username:u})})).json();
+ $('#admOut').style.display='block';$('#admOut').innerHTML=r.error?esc(r.error):`Temporary password for <b>${esc(r.username)}</b>: <code>${esc(r.password)}</code>. They sign in on the organiser site and must choose a new one.`};
+$('#chpw').onclick=async()=>{const current=prompt('Current app password:');if(current===null)return;const nw=prompt('New app password (8 or more characters):');if(!nw)return;post('/api/change-password',{current,new:nw})};
 const ago=t=>{const m=Math.round((Date.now()/1000-t)/60);return m<1?'just now':m<60?m+' min ago':Math.round(m/60)+' h ago'};
 function drawUpd(u){$('#updAuto').checked=!!u.auto;$('#updTok').placeholder=u.token_set?'saved (hidden)':'github_pat_...';
  const lr=u.last_result;$('#updInfo').innerHTML=`Version <code>${esc(u.version||'unknown')}</code>${u.checked_at?` · checked ${ago(u.checked_at)}`:''}${u.error?` · <span style="color:var(--err)">${esc(u.error)}</span>`:u.available?` · <b>new version ${esc(u.latest)} available</b>`:u.checked_at?' · up to date':''}${u.note?` · ${esc(u.note)}`:''}${lr?`<br>Last update: ${esc(lr.message)} (${ago(lr.at)})`:''}`;

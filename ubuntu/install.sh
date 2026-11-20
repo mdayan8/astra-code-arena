@@ -27,13 +27,14 @@ retry() {  # retry N command...  (waits a little longer after each failure)
 }
 trap 'echo "##FAILED: an unexpected problem during \"$STEP\" (line $LINENO). Press Try again; if it repeats, send the details below to the organiser."' ERR
 
-WITH_AI="" IMPORT="" UNINSTALL="" PURGE="" UPDATE=""
+WITH_AI="" IMPORT="" UNINSTALL="" PURGE="" UPDATE="" AI_ONLY=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --with-ai) WITH_AI=1 ;;
     --import) IMPORT="$(realpath "$2")"; shift ;;
     --uninstall) UNINSTALL=1 ;;
     --purge) PURGE=1 ;;
+    --ai-only) AI_ONLY=1 ;;   # the control panel's "Install AI model" button
     --update) UPDATE=1 ;;   # automatic update from GitHub: quick steps, health check, rollback if the new version fails
   esac
   shift
@@ -42,6 +43,27 @@ mkdir -p /run
 exec 9>/run/astra-arena-install.lock   # one install/update/uninstall at a time
 flock -n 9 || die "another install or update is already running. Wait for it to finish."
 [ -z "$IMPORT" ] || [ -f "$IMPORT" ] || die "move package not found: $IMPORT"
+
+install_ai() {
+  local model=qwen2.5-coder:1.5b i
+  if ! command -v ollama >/dev/null; then
+    retry 3 curl -fL -sS --connect-timeout 20 -o /tmp/ollama-install.sh https://ollama.com/install.sh || return 1
+    [ -s /tmp/ollama-install.sh ] || return 1
+    sh /tmp/ollama-install.sh || return 1
+  fi
+  systemctl enable --now ollama >/dev/null 2>&1 || true
+  for i in $(seq 1 30); do ollama list >/dev/null 2>&1 && break; [ "$i" = 5 ] && { systemctl restart ollama >/dev/null 2>&1 || (nohup ollama serve >/var/log/ollama-astra.log 2>&1 &); }; sleep 2; done
+  ollama list >/dev/null 2>&1 || { echo "  the AI service did not start"; return 1; }
+  ollama list | grep -q "^$model" || retry 3 ollama pull $model || return 1
+  sed -i '/^#* *AI_BASE_URL=/d; /^#* *AI_MODEL=/d' $ENVF
+  printf 'AI_BASE_URL=http://127.0.0.1:11434/v1\nAI_MODEL=%s\n' $model >> $ENVF
+}
+if [ -n "$AI_ONLY" ]; then
+  say "Installing the local AI model (Ollama + qwen2.5-coder:1.5b, about 1 GB download)"
+  [ -f $ENVF ] || die "ASTRA Arena is not installed yet. Run the full setup first."
+  if install_ai; then echo "##AI-DONE ok"; systemctl restart $SVC || true; else echo "##AI-DONE fail"; exit 1; fi
+  exit 0
+fi
 
 if [ -n "$UNINSTALL" ]; then
   PORT=$(python3 -c "import json;print(json.load(open('$DATA/launcher.json')).get('port',8000))" 2>/dev/null || echo 8000)
@@ -160,20 +182,6 @@ fi
 grep -q '^DATA_DIR=' $ENVF || echo "DATA_DIR=$DATA" >> $ENVF   # a hand-edited file must still point at the data
 
 # ---------------------------------------------------------------- 6. AI model (optional: never stops the install)
-install_ai() {
-  local model=qwen2.5-coder:1.5b i
-  if ! command -v ollama >/dev/null; then
-    retry 3 curl -fL -sS --connect-timeout 20 -o /tmp/ollama-install.sh https://ollama.com/install.sh || return 1
-    [ -s /tmp/ollama-install.sh ] || return 1
-    sh /tmp/ollama-install.sh || return 1
-  fi
-  systemctl enable --now ollama >/dev/null 2>&1 || true
-  for i in $(seq 1 30); do ollama list >/dev/null 2>&1 && break; [ "$i" = 5 ] && { systemctl restart ollama >/dev/null 2>&1 || (nohup ollama serve >/var/log/ollama-astra.log 2>&1 &); }; sleep 2; done
-  ollama list >/dev/null 2>&1 || { echo "  the AI service did not start"; return 1; }
-  ollama list | grep -q "^$model" || retry 3 ollama pull $model || return 1
-  sed -i '/^#* *AI_BASE_URL=/d; /^#* *AI_MODEL=/d' $ENVF
-  printf 'AI_BASE_URL=http://127.0.0.1:11434/v1\nAI_MODEL=%s\n' $model >> $ENVF
-}
 if [ -n "$WITH_AI" ]; then
   say "Installing the local AI model (Ollama + qwen2.5-coder:1.5b, about 1 GB download)"
   install_ai || warn "The AI model could not be installed (slow or blocked download). Everything else works; Prompt challenges and AI Studio stay off. Run the installer again with the AI option to retry."
@@ -212,7 +220,7 @@ EOF
 
 cat > /usr/local/bin/astra-arena <<'EOF'
 #!/usr/bin/env bash
-# astra-arena: open | status | start | stop | restart | logs | backup | doctor | update | package | reset-password | remove
+# astra-arena: open | status | start | stop | restart | logs | backup | doctor | update | package | reset-panel-password | reset-password | remove
 URL=http://127.0.0.1:8765/
 tok() { sudo cat /var/lib/astra-arena/panel.token 2>/dev/null; }
 py() { sudo bash -c "set -a; . /etc/astra-arena.env; cd /opt/astra-arena && .venv/bin/python $*"; }
@@ -231,9 +239,12 @@ for c in json.load(sys.stdin): print({"ok":"[ OK ]","warn":"[WARN]","err":"[FAIL
           || echo "The control panel is not answering. Try: astra-arena restart" ;;
   update) curl -s -X POST -H "X-Token: $(tok)" -H "Content-Type: application/json" -d '{"apply": true}' ${URL}api/update; echo ;;
   package) py -c "'import launcher; print(launcher.EXPORTS / launcher.make_package())'" ;;
+  reset-panel-password)   # forgot the app password: prove it with the Ubuntu password, then create a new one
+    if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v pkexec >/dev/null; then pkexec touch /var/lib/astra-arena/panel.reset; else sudo touch /var/lib/astra-arena/panel.reset; fi \
+      && { echo "App password cleared. Opening the control panel: create a new password there."; "$0" open; } ;;
   reset-password) py -m app.manage reset-password "${2:-admin}" ;;
   remove) sudo /opt/astra-arena/ubuntu/install.sh --uninstall ;;
-  *) echo "usage: astra-arena open|status|start|stop|restart|logs|backup|doctor|update|package|reset-password [user]|remove" ;;
+  *) echo "usage: astra-arena open|status|start|stop|restart|logs|backup|doctor|update|package|reset-panel-password|reset-password [user]|remove" ;;
 esac
 EOF
 chmod 755 /usr/local/bin/astra-arena
@@ -249,6 +260,11 @@ Type=Application
 StartupWMClass=astra-arena
 Categories=Education;Development;
 Keywords=contest;coding;judge;astra;pesitm;
+Actions=ResetPassword;
+
+[Desktop Action ResetPassword]
+Name=Reset app password
+Exec=/usr/local/bin/astra-arena reset-panel-password
 EOF
 } || warn "The app-menu icon could not be created. Open the control panel with the command: astra-arena"
 gtk-update-icon-cache -q /usr/share/icons/hicolor 2>/dev/null || true
@@ -309,7 +325,8 @@ say "Done. ASTRA Code Arena is running and starts by itself after every reboot."
 echo "  Control panel (this PC): open 'ASTRA Code Arena' from the app menu, or run: astra-arena"
 echo "  Students:                $STUDENTS"
 echo "  Check health:            astra-arena doctor"
-[ -n "$PW" ] && echo "  First admin login:       admin / $PW   (you must change it; the organiser link is in the control panel)"
+[ -n "$PW" ] && echo "  First admin login:       admin / $PW   (for the organiser site; you must change it at first sign-in)"
+echo "  The control panel asks you to create its own password the first time you open it."
 if [ ${#WARNINGS[@]} -gt 0 ]; then
   echo; echo "Finished with ${#WARNINGS[@]} note(s). The platform works; these parts can be fixed later by running the installer again:"
   for w in "${WARNINGS[@]}"; do echo "NOTE: $w"; done
