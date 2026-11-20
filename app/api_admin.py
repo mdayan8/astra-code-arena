@@ -386,6 +386,50 @@ def create_comp(body: CompIn, req: Request, u=Depends(admin), c=Depends(conn)):
     return comp_full(c, contest.get_comp(c, cid))
 
 
+class AssistIn(BaseModel):
+    message: str = Field(default="", max_length=2000)
+    plan: dict = {}
+    create: bool = False
+
+
+@router.post("/assistant/competition")
+def assistant_competition(body: AssistIn, req: Request, u=Depends(admin), c=Depends(conn)):
+    """Chat box on the Competitions page: describe a round in plain words, review the plan, then create it as a draft."""
+    need(u, "competitions.create")
+    from . import assistant
+    plan = assistant.parse(body.message, body.plan, departments(c)) if body.message.strip() else dict(body.plan)
+    random_state = plan.pop("picked", None)  # keep the same questions between turns unless the request changed
+    chosen, short = assistant.pick(c, plan)
+    if random_state and not body.message.strip():
+        keep = {q["id"]: q for q in db.all_(c, "SELECT q.id, q.category, q.difficulty, qv.title, qv.qtype FROM questions q JOIN question_versions qv ON qv.id=q.latest_version_id "
+                                               f"WHERE q.status='approved' AND q.id IN ({','.join('?' * len(random_state))})", *random_state)}
+        chosen = [keep[i] for i in random_state if i in keep] or chosen
+    out = assistant.describe(plan, chosen, short)
+    plan["picked"] = [q["id"] for q in chosen]
+    out["plan"] = plan
+    if not body.create:
+        return out
+    if not chosen:
+        raise HTTPException(400, "No questions matched yet. Tell me which questions you want first.")
+    title = plan.get("title") or assistant.default_title(plan, datetime.now(TZ))
+    base = re.sub(r"[^A-Z0-9]+", "-", title.upper()).strip("-") or "ROUND"
+    base = base if len(base) <= 24 else (base[:24].rsplit("-", 1)[0] or base[:24])
+    code, n = base, 2
+    while db.one(c, "SELECT 1 AS x FROM competitions WHERE code=?", code):
+        code, n = f"{base}-{n}", n + 1
+    marks = int(plan.get("marks") or 100)
+    yr = datetime.now(TZ)
+    comp = create_comp(CompIn(title=title, code=code, description="Created with the competition assistant.", duration_min=int(plan.get("duration_min") or 90),
+                              academic_year=f"{yr.year if yr.month >= 6 else yr.year - 1}-{str((yr.year if yr.month >= 6 else yr.year - 1) + 1)[2:]}",
+                              eligible_years=plan.get("eligible_years") or [], eligible_departments=plan.get("eligible_departments") or [],
+                              start_at=plan.get("start_at"), languages=plan.get("languages") or ["c", "python"], max_marks=marks * len(chosen),
+                              scoring={"mode": plan.get("scoring_mode") or "partial"}, leaderboard_visibility=plan.get("leaderboard_visibility") or "live",
+                              lockdown=plan.get("lockdown") or {}), req, u, c)
+    set_questions(comp["id"], QuestionsIn(questions=[{"question_id": q["id"], "marks": marks} for q in chosen]), req, u, c)
+    out.update(created={"id": comp["id"], "title": title, "code": code})
+    return out
+
+
 @router.get("/competitions/{cid}")
 def get_comp(cid: int, u=Depends(admin), c=Depends(conn)):
     return comp_full(c, comp_or_404(c, cid, u))
@@ -920,7 +964,7 @@ class QuestionIn(BaseModel):
     max_marks: int = Field(default=100, ge=1, le=10000)
     practice: bool = False
     references: dict[str, str] = {}
-    qtype: str = Field(default="standard", pattern="^(standard|debug|complete|prompt)$")
+    qtype: str = Field(default="standard", pattern="^(standard|debug|complete|prompt|output|trace)$")
     starter: dict[str, str] = {}
     tests: list[TestIn] | None = None  # only used on create
 
@@ -986,7 +1030,7 @@ def insert_tests(c, vid, tests):
 
 def create_question(c, b: QuestionIn, u, source="manual"):
     t = db.now()
-    langs = ["prompt"] if b.qtype == "prompt" else [l for l in b.languages if l in judge.CODE_LANGS] or list(judge.CODE_LANGS)
+    langs = ["prompt"] if b.qtype == "prompt" else ["answer"] if b.qtype in judge.ANSWER_QTYPES else [l for l in b.languages if l in judge.CODE_LANGS] or list(judge.CODE_LANGS)
     qid = c.execute("INSERT INTO questions(slug,category,difficulty,tags,status,source,practice,created_by,created_at,updated_at) VALUES(?,?,?,?, 'draft', ?,?,?,?,?)",
                     (unique_slug(c, slugify(b.slug or b.title)), b.category, b.difficulty, json.dumps([x.strip() for x in b.tags if x.strip()][:12]),
                      source, int(b.practice), u["id"], t, t)).lastrowid
@@ -1089,7 +1133,7 @@ def edit_question(qid: int, body: QuestionIn, req: Request, u=Depends(admin), c=
     with db.tx(c):
         vid, _ = editable_version(c, qid, u)
         old = db.one(c, "SELECT * FROM question_versions WHERE id=?", vid)
-        langs = ["prompt"] if body.qtype == "prompt" else [l for l in body.languages if l in judge.CODE_LANGS] or list(judge.CODE_LANGS)
+        langs = ["prompt"] if body.qtype == "prompt" else ["answer"] if body.qtype in judge.ANSWER_QTYPES else [l for l in body.languages if l in judge.CODE_LANGS] or list(judge.CODE_LANGS)
         c.execute("UPDATE question_versions SET title=?, statement=?, input_format=?, output_format=?, constraints=?, languages=?, time_limit_ms=?, memory_mb=?, max_marks=?, qtype=?, starter=? WHERE id=?",
                   (body.title.strip(), body.statement, body.input_format, body.output_format, body.constraints, json.dumps(langs), body.time_limit_ms,
                    body.memory_mb, body.max_marks, body.qtype, json.dumps({k: v for k, v in body.starter.items() if k in judge.LANGS and v.strip()}), vid))
@@ -1466,7 +1510,7 @@ def approve_draft(gid: int, req: Request, u=Depends(admin), c=Depends(conn)):
                       difficulty=p.get("difficulty") if p.get("difficulty") in ("Easy", "Intermediate", "Challenging") else "Easy",
                       tags=p.get("tags") or [], statement=p.get("statement", ""), input_format=p.get("input_format", ""), output_format=p.get("output_format", ""),
                       constraints=p.get("constraints", ""), references={k: v for k, v in (p.get("reference") or {}).items() if k in judge.LANGS and v},
-                      qtype=p.get("qtype") if p.get("qtype") in ("standard", "debug", "complete", "prompt") else "standard",
+                      qtype=p.get("qtype") if p.get("qtype") in ("standard", "debug", "complete", "prompt", "output", "trace") else "standard",
                       starter={k: str(v) for k, v in (p.get("starter") or {}).items() if k in judge.LANGS and v},
                       tests=[TestIn(**{k: v for k, v in t.items() if k in TestIn.model_fields}) for t in tests])
     with db.tx(c):

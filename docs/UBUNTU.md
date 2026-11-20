@@ -69,13 +69,14 @@ Open **ASTRA Code Arena** from the app menu (purple hexagon icon). It opens in i
 | Card | What it does |
 |---|---|
 | Top bar | **Running** (green), **Starting / recovering** (amber) or **Stopped** (grey) |
-| Open to the college network | One button. **Open**: binds to the network, opens the firewall port, sets the fixed address and tests that the site answers. **Close**: only this computer can open it |
+| Run / Stop (big round button) | Starts or stops the platform. Green means running. The numbers beside it are live |
+| Open to the college network | One button. Also answers on the standard web port when it is free, so students can type just `http://<address>/` without `:8000`. **Open**: binds to the network, opens the firewall port, sets the fixed address and tests that the site answers. **Close**: only this computer can open it |
 | Run / Stop / Restart | Start or stop the platform. If you press Stop, it stays stopped after a reboot until you press Run again |
 | Links to share | **Students** link: share with everyone. **Organisers (private)** link: give only to staff. First admin password until you click "I saved it" |
 | This machine | Cores, RAM, free disk, live CPU and memory use, and how many students it comfortably serves |
 | Network | Address (All networks is recommended), Port (default 8000), Judge workers (empty = auto) |
 | Opening hours | Days and times students can use the site. Outside them students see a "closed, opens at..." page. It never closes during a live round, and admins always have access |
-| Keep it running | Start at boot, an extra backup folder (e.g. a USB drive), Back up now, Stop and close |
+| Keep it running | **Hide the app icon from this computer** (removes it from the app menu and every desktop; open the app later with Alt+F2 → `astra-arena`), start at boot, an extra backup folder (e.g. a USB drive), Back up now, Stop and close |
 | Updates | Current version, Check now / Update now, automatic updates on or off, access token for a private repository |
 | Move to another computer | Create a move package, import one, or remove this computer as the host (section 8) |
 | Diagnose & fix | Runs 14 health checks. Each problem shows the fix, often as a one-click button |
@@ -112,6 +113,30 @@ Open the **Organisers** link from the control panel and sign in. The menu:
 
 Create one competition per year group (for example "1st year: Basics", "3rd year: DSA"). They can all run at the same time.
 
+### Describe a competition (chat box)
+
+Competitions → **Describe a competition**. Type it in plain words, for example:
+
+> 60 minute C round for 1st years tomorrow at 10am, 3 easy coding, 2 predict the output, 1 debug, full screen, no internet, auto submit after 3 warnings
+
+It shows a plan (title, time, who, rules) and the matching questions it picked from the bank. Then:
+- type a change ("make it 90 minutes", "add 2 code tracing questions", "for CSE and ISE 2nd year");
+- press **Pick different questions** for another selection;
+- press **Create draft competition**. Nothing is public until you open the draft and publish it.
+
+It understands durations, dates and times, years, departments, languages, question counts by type, level and topic, and the exam rules. It works offline and does not need the AI model. If the bank does not have enough matching questions it tells you how many are missing.
+
+### Built-in C practice modules
+
+Every installation starts with two practice modules, 18 validated questions in all:
+
+| Module | Questions |
+|---|---|
+| C Basics (8) | input and output, if-else, operators, a factorial to complete, a swap bug to fix, output prediction, loop tracing |
+| C Logic Building (10) | digits, palindromes, primes, patterns, Fibonacci, off-by-one bug, nested loops, tracing, second largest |
+
+Students see them under **Practice** as modules with their own progress. You can edit, archive or add to them in Question Bank; they are not re-added after you remove them. A question that is in a draft, published or live competition is hidden from Practice until that round ends.
+
 ### Creating questions with AI
 
 Organiser site → **AI Studio**: type what you want in one box (for example "an easy array question for 1st years about finding the second largest number") and the AI writes the statement, a reference solution and test cases, runs them in the sandbox, and saves a validated draft for you to review and approve. **Question Import** does the same from PDFs, Word files or photos of a question paper.
@@ -125,6 +150,8 @@ This needs the AI model. If you did not tick it during setup: app → **Diagnose
 | Standard | write a full program from scratch | DSA, problem solving |
 | Fix the bug | get code with a mistake and must fix it | Debugging rounds, code reviews, "codebase" challenges |
 | Complete the code | fill in the missing part of given code | 1st year, timed warm-ups |
+| Predict the output | read a program and type exactly what it prints (nothing is run) | Code reading, exam-style rounds |
+| Code tracing | follow a loop or function by hand and type the final value | Logic building |
 | Prompt challenge | write an AI prompt (not code); the AI's reply to each hidden input must match exactly | Prompt engineering, new-age AI rounds |
 
 For **Fix the bug** and **Complete the code**, paste the starter code per language in the question editor. For a **Prompt challenge**, the reference solution is a prompt that you know works; validate it like any other question.

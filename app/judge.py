@@ -45,7 +45,10 @@ LANGS = {
     # prompt-engineering challenge: the "code" is a prompt; each test input is sent to the local AI and its reply is judged like stdout
     "prompt": {"name": "Prompt (AI challenge)", "file": "prompt.txt", "compile": None, "run": None, "time_factor": 1.0, "as_limit": False, "monaco": "markdown", "ai": True},
 }
-CODE_LANGS = [k for k, v in LANGS.items() if not v.get("ai")]
+# predict-the-output / code-tracing questions: the student types the answer; it is compared with the expected text (nothing runs)
+LANGS["answer"] = {"name": "Written answer", "file": "answer.txt", "compile": None, "run": None, "time_factor": 1.0, "as_limit": False, "monaco": "plaintext", "text": True}
+CODE_LANGS = [k for k, v in LANGS.items() if not v.get("ai") and not v.get("text")]
+ANSWER_QTYPES = ("output", "trace")
 
 TEMPLATES = {
     "c": '#include <stdio.h>\n\nint main(void) {\n    // read input from stdin, print answer to stdout\n    int n;\n    if (scanf("%d", &n) != 1) return 0;\n    printf("%d\\n", n);\n    return 0;\n}\n',
@@ -75,6 +78,9 @@ def student_python():
 def available_languages():
     out = {}
     for k, L in LANGS.items():
+        if L.get("text"):
+            out[k] = True
+            continue
         if L.get("ai"):
             from . import ai
             out[k] = ai.enabled()
@@ -233,6 +239,8 @@ def run_job(job, tests, workdir: Path, uid=None):
         raise JudgeInfraError(f"unknown language {lang}")
     if not available_languages().get(lang):
         raise JudgeInfraError(f"{L['name']} toolchain is not installed on the judge")
+    if L.get("text"):
+        return _answer_job(job, tests)
     if L.get("ai"):
         return _prompt_job(job, tests)
     if workdir.exists():
@@ -283,6 +291,19 @@ def run_job(job, tests, workdir: Path, uid=None):
     finally:
         _kill_uid(uid)
         shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _answer_job(job, tests):
+    """Written answer (predict the output / trace the code): exact match after trimming trailing spaces and blank lines."""
+    ans = job["code"][:20000]
+    results, worst = [], None
+    for t in tests:
+        v = "OK" if t.get("expected") is None else ("AC" if normalize(ans) == normalize(t["expected"]) else "WA")
+        results.append({"test_case_id": t.get("id"), "ordinal": t["ordinal"], "visibility": t.get("visibility", "hidden"), "weight": t.get("weight", 1),
+                        "verdict": v, "time_ms": 0, "memory_kb": 0, "output": ans, "stderr": ""})
+        worst = worst or (v if v not in ("AC", "OK") else None)
+    return {"verdict": worst or ("AC" if any(t.get("expected") is not None for t in tests) else "OK"),
+            "compile_output": "", "results": results, "time_ms": 0, "memory_kb": 0}
 
 
 def _prompt_job(job, tests):

@@ -452,7 +452,8 @@ def arena(comp_id: int, u=Depends(student), c=Depends(conn)):
         b = best.get(q["question_id"], {})
         pl = problem_payload(c, q, {"id": q["question_id"], "label": chr(65 + i), "marks": q["marks"], "best": b.get("best") or 0,
                                     "solved": bool(b.get("ac")), "tries": b.get("tries") or 0})
-        pl["languages"] = [l for l in pl["languages"] if l in langs] or langs
+        special = [l for l in pl["languages"] if l in ("answer", "prompt")]  # written-answer / prompt questions work in any round
+        pl["languages"] = special or [l for l in pl["languages"] if l in langs] or langs
         problems.append(pl)
     fin = db.one(c, "SELECT finished_at FROM participant_finish WHERE competition_id=? AND user_id=?", comp_id, u["id"])
     return {"competition": public_comp(c, comp, u), "problems": problems, "disqualified": p["status"] == "disqualified", "finished_at": fin["finished_at"] if fin else None,
@@ -482,9 +483,9 @@ def finish(comp_id: int, req: Request, u=Depends(student), c=Depends(conn)):
 
 @router.get("/api/student/practice")
 def practice_list(u=Depends(student), c=Depends(conn)):
-    rows = db.all_(c, "SELECT q.id, q.slug, q.category, q.difficulty, q.tags, qv.title FROM questions q JOIN question_versions qv ON qv.id=q.latest_version_id "
+    rows = db.all_(c, "SELECT q.id, q.slug, q.category, q.difficulty, q.tags, qv.title, qv.qtype FROM questions q JOIN question_versions qv ON qv.id=q.latest_version_id "
                       "WHERE q.practice=1 AND q.status='approved' AND NOT EXISTS (SELECT 1 FROM competition_questions cq JOIN competitions co ON co.id=cq.competition_id "
-                      "WHERE cq.question_id=q.id AND co.status IN ('draft','published','live','paused')) ORDER BY q.difficulty, qv.title")
+                      "WHERE cq.question_id=q.id AND co.status IN ('draft','published','live','paused')) ORDER BY q.category, q.id")
     solved = {r["question_id"] for r in db.all_(c, "SELECT DISTINCT question_id FROM submissions WHERE user_id=? AND verdict='AC'", u["id"])}
     tried = {r["question_id"] for r in db.all_(c, "SELECT DISTINCT question_id FROM submissions WHERE user_id=? AND kind='practice'", u["id"])}
     for r in rows:
@@ -546,7 +547,7 @@ def submit(body: SubmitIn, req: Request, u=Depends(student), c=Depends(conn)):
         if not cq:
             raise HTTPException(404, "Problem not found in this competition.")
         v = db.one(c, "SELECT * FROM question_versions WHERE id=?", cq["version_id"])
-        allowed = [l for l in db.jl(v["languages"]) if l in db.jl(comp["languages"])] or db.jl(comp["languages"])
+        allowed = [l for l in db.jl(v["languages"]) if l in ("answer", "prompt")] or [l for l in db.jl(v["languages"]) if l in db.jl(comp["languages"])] or db.jl(comp["languages"])
         if body.language not in allowed:
             raise HTTPException(400, "That language is not allowed in this competition.")
         kind, comp_id, vid = body.kind, comp["id"], v["id"]

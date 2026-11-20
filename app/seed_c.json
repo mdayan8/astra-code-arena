@@ -1,0 +1,825 @@
+{
+ "key": "c_practice_v1",
+ "modules": [
+  {
+   "category": "C Basics",
+   "questions": [
+    {
+     "title": "Sum of Two Numbers",
+     "statement": "Read two integers and print their sum.",
+     "input_format": "Two integers a and b on one line.",
+     "output_format": "One integer: a + b.",
+     "difficulty": "Easy",
+     "tags": [
+      "input-output",
+      "arithmetic"
+     ],
+     "qtype": "standard",
+     "languages": [
+      "c"
+     ],
+     "references": {
+      "c": "#include <stdio.h>\nint main(void){long a,b;if(scanf(\"%ld %ld\",&a,&b)!=2)return 0;printf(\"%ld\\n\",a+b);return 0;}\n"
+     },
+     "starter": {},
+     "tests": [
+      {
+       "input": "3 4\n",
+       "expected": "7\n",
+       "visibility": "sample"
+      },
+      {
+       "input": "10 -3\n",
+       "expected": "7\n",
+       "visibility": "sample"
+      },
+      {
+       "input": "0 0\n",
+       "expected": "0\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "-7 -8\n",
+       "expected": "-15\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "100000 250000\n",
+       "expected": "350000\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "999999 1\n",
+       "expected": "1000000\n",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Even or Odd",
+     "statement": "Read an integer and print `Even` if it is even, otherwise print `Odd`.",
+     "input_format": "One integer n.",
+     "output_format": "`Even` or `Odd`.",
+     "difficulty": "Easy",
+     "tags": [
+      "if-else",
+      "modulo"
+     ],
+     "qtype": "standard",
+     "languages": [
+      "c"
+     ],
+     "references": {
+      "c": "#include <stdio.h>\nint main(void){long n;if(scanf(\"%ld\",&n)!=1)return 0;puts(n%2==0?\"Even\":\"Odd\");return 0;}\n"
+     },
+     "starter": {},
+     "tests": [
+      {
+       "input": "8\n",
+       "expected": "Even\n",
+       "visibility": "sample"
+      },
+      {
+       "input": "13\n",
+       "expected": "Odd\n",
+       "visibility": "sample"
+      },
+      {
+       "input": "0\n",
+       "expected": "Even\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "-5\n",
+       "expected": "Odd\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "-12\n",
+       "expected": "Even\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "1000001\n",
+       "expected": "Odd\n",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Largest of Three",
+     "statement": "Read three integers and print the largest one.",
+     "input_format": "Three integers on one line.",
+     "output_format": "The largest of the three.",
+     "difficulty": "Easy",
+     "tags": [
+      "if-else",
+      "comparison"
+     ],
+     "qtype": "standard",
+     "languages": [
+      "c"
+     ],
+     "references": {
+      "c": "#include <stdio.h>\nint main(void){long a,b,c;if(scanf(\"%ld %ld %ld\",&a,&b,&c)!=3)return 0;long m=a;if(b>m)m=b;if(c>m)m=c;printf(\"%ld\\n\",m);return 0;}\n"
+     },
+     "starter": {},
+     "tests": [
+      {
+       "input": "4 9 2\n",
+       "expected": "9\n",
+       "visibility": "sample"
+      },
+      {
+       "input": "7 7 3\n",
+       "expected": "7\n",
+       "visibility": "sample"
+      },
+      {
+       "input": "-1 -5 -3\n",
+       "expected": "-1\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "10 2 10\n",
+       "expected": "10\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "0 0 0\n",
+       "expected": "0\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "5 6 7\n",
+       "expected": "7\n",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Predict the Output: Integer Division",
+     "statement": "What does this program print?\n\n```c\n#include <stdio.h>\nint main(void){\n    int a = 17, b = 5;\n    printf(\"%d %d\\n\", a / b, a % b);\n    return 0;\n}\n```\n\nType your answer exactly as the program prints it.",
+     "input_format": "",
+     "output_format": "",
+     "difficulty": "Easy",
+     "tags": [
+      "operators",
+      "division"
+     ],
+     "qtype": "output",
+     "languages": [
+      "answer"
+     ],
+     "references": {
+      "answer": "3 2\n"
+     },
+     "starter": {},
+     "tests": [
+      {
+       "input": "",
+       "expected": "3 2\n",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Predict the Output: Increment Operators",
+     "statement": "What does this program print?\n\n```c\n#include <stdio.h>\nint main(void){\n    int x = 5;\n    int y = x++;\n    int z = ++x;\n    printf(\"%d %d %d\\n\", x, y, z);\n    return 0;\n}\n```\n\nType your answer exactly as the program prints it.",
+     "input_format": "",
+     "output_format": "",
+     "difficulty": "Easy",
+     "tags": [
+      "operators",
+      "increment"
+     ],
+     "qtype": "output",
+     "languages": [
+      "answer"
+     ],
+     "references": {
+      "answer": "7 5 7\n"
+     },
+     "starter": {},
+     "tests": [
+      {
+       "input": "",
+       "expected": "7 5 7\n",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Complete the Code: Factorial",
+     "statement": "The program must read `n` (0 to 12) and print `n!`. The loop body is missing. Complete it.",
+     "input_format": "One integer n (0 \u2264 n \u2264 12).",
+     "output_format": "n!",
+     "difficulty": "Easy",
+     "tags": [
+      "loops",
+      "factorial"
+     ],
+     "qtype": "complete",
+     "languages": [
+      "c"
+     ],
+     "references": {
+      "c": "#include <stdio.h>\nint main(void){int n;if(scanf(\"%d\",&n)!=1)return 0;long f=1;for(int i=2;i<=n;i++)f*=i;printf(\"%ld\\n\",f);return 0;}\n"
+     },
+     "starter": {
+      "c": "#include <stdio.h>\n\nint main(void) {\n    int n;\n    if (scanf(\"%d\", &n) != 1) return 0;\n    long f = 1;\n    for (int i = 2; i <= n; i++) {\n        /* TODO: multiply f by i */\n    }\n    printf(\"%ld\\n\", f);\n    return 0;\n}\n"
+     },
+     "tests": [
+      {
+       "input": "5\n",
+       "expected": "120\n",
+       "visibility": "sample"
+      },
+      {
+       "input": "0\n",
+       "expected": "1\n",
+       "visibility": "sample"
+      },
+      {
+       "input": "1\n",
+       "expected": "1\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "10\n",
+       "expected": "3628800\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "12\n",
+       "expected": "479001600\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "7\n",
+       "expected": "5040\n",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Fix the Bug: Swap Two Numbers",
+     "statement": "This program should read two integers and print them in swapped order, but it prints the wrong result. Find and fix the bug.",
+     "input_format": "Two integers a and b.",
+     "output_format": "b then a, separated by a space.",
+     "difficulty": "Easy",
+     "tags": [
+      "variables",
+      "swap"
+     ],
+     "qtype": "debug",
+     "languages": [
+      "c"
+     ],
+     "references": {
+      "c": "#include <stdio.h>\nint main(void){int a,b;if(scanf(\"%d %d\",&a,&b)!=2)return 0;int t=a;a=b;b=t;printf(\"%d %d\\n\",a,b);return 0;}\n"
+     },
+     "starter": {
+      "c": "#include <stdio.h>\n\nint main(void) {\n    int a, b;\n    if (scanf(\"%d %d\", &a, &b) != 2) return 0;\n    a = b;\n    b = a;\n    printf(\"%d %d\\n\", a, b);\n    return 0;\n}\n"
+     },
+     "tests": [
+      {
+       "input": "3 9\n",
+       "expected": "9 3\n",
+       "visibility": "sample"
+      },
+      {
+       "input": "5 5\n",
+       "expected": "5 5\n",
+       "visibility": "sample"
+      },
+      {
+       "input": "-2 7\n",
+       "expected": "7 -2\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "0 1\n",
+       "expected": "1 0\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "100 -100\n",
+       "expected": "-100 100\n",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Trace the Code: Running Total",
+     "statement": "Follow the loop step by step. What is printed at the end?\n\n```c\n#include <stdio.h>\nint main(void){\n    int total = 0;\n    for (int i = 1; i <= 6; i++) {\n        if (i % 2 == 0) total += i;\n        else total -= 1;\n    }\n    printf(\"%d\\n\", total);\n    return 0;\n}\n```\n\nType your answer exactly as the program prints it.",
+     "input_format": "",
+     "output_format": "",
+     "difficulty": "Easy",
+     "tags": [
+      "loops",
+      "tracing"
+     ],
+     "qtype": "trace",
+     "languages": [
+      "answer"
+     ],
+     "references": {
+      "answer": "9\n"
+     },
+     "starter": {},
+     "tests": [
+      {
+       "input": "",
+       "expected": "9\n",
+       "visibility": "hidden"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "category": "C Logic Building",
+   "questions": [
+    {
+     "title": "Sum of Digits",
+     "statement": "Read a non-negative integer and print the sum of its digits.",
+     "input_format": "One integer n (0 \u2264 n \u2264 10^9).",
+     "output_format": "Sum of the digits of n.",
+     "difficulty": "Easy",
+     "tags": [
+      "loops",
+      "digits"
+     ],
+     "qtype": "standard",
+     "languages": [
+      "c"
+     ],
+     "references": {
+      "c": "#include <stdio.h>\nint main(void){long n;if(scanf(\"%ld\",&n)!=1)return 0;int s=0;if(n<0)n=-n;while(n>0){s+=n%10;n/=10;}printf(\"%d\\n\",s);return 0;}\n"
+     },
+     "starter": {},
+     "tests": [
+      {
+       "input": "1234\n",
+       "expected": "10\n",
+       "visibility": "sample"
+      },
+      {
+       "input": "9\n",
+       "expected": "9\n",
+       "visibility": "sample"
+      },
+      {
+       "input": "0\n",
+       "expected": "0\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "99999\n",
+       "expected": "45\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "100000\n",
+       "expected": "1\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "987654321\n",
+       "expected": "45\n",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Reverse a Number",
+     "statement": "Read a non-negative integer and print its digits in reverse order, without leading zeros.",
+     "input_format": "One integer n (0 \u2264 n \u2264 10^9).",
+     "output_format": "n with its digits reversed.",
+     "difficulty": "Easy",
+     "tags": [
+      "loops",
+      "digits"
+     ],
+     "qtype": "standard",
+     "languages": [
+      "c"
+     ],
+     "references": {
+      "c": "#include <stdio.h>\nint main(void){long n;if(scanf(\"%ld\",&n)!=1)return 0;long r=0;while(n>0){r=r*10+n%10;n/=10;}printf(\"%ld\\n\",r);return 0;}\n"
+     },
+     "starter": {},
+     "tests": [
+      {
+       "input": "1234\n",
+       "expected": "4321\n",
+       "visibility": "sample"
+      },
+      {
+       "input": "1200\n",
+       "expected": "21\n",
+       "visibility": "sample"
+      },
+      {
+       "input": "7\n",
+       "expected": "7\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "0\n",
+       "expected": "0\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "1000001\n",
+       "expected": "1000001\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "98765\n",
+       "expected": "56789\n",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Palindrome Number",
+     "statement": "Read a non-negative integer. Print `Yes` if it reads the same forwards and backwards, otherwise `No`.",
+     "input_format": "One integer n.",
+     "output_format": "`Yes` or `No`.",
+     "difficulty": "Easy",
+     "tags": [
+      "loops",
+      "digits"
+     ],
+     "qtype": "standard",
+     "languages": [
+      "c"
+     ],
+     "references": {
+      "c": "#include <stdio.h>\nint main(void){long n;if(scanf(\"%ld\",&n)!=1)return 0;long o=n,r=0;while(n>0){r=r*10+n%10;n/=10;}puts(r==o?\"Yes\":\"No\");return 0;}\n"
+     },
+     "starter": {},
+     "tests": [
+      {
+       "input": "121\n",
+       "expected": "Yes\n",
+       "visibility": "sample"
+      },
+      {
+       "input": "123\n",
+       "expected": "No\n",
+       "visibility": "sample"
+      },
+      {
+       "input": "7\n",
+       "expected": "Yes\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "1221\n",
+       "expected": "Yes\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "10\n",
+       "expected": "No\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "0\n",
+       "expected": "Yes\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "123454321\n",
+       "expected": "Yes\n",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Prime Check",
+     "statement": "Read an integer n. Print `Prime` if n is a prime number, otherwise `Not Prime`.",
+     "input_format": "One integer n (0 \u2264 n \u2264 10^6).",
+     "output_format": "`Prime` or `Not Prime`.",
+     "difficulty": "Easy",
+     "tags": [
+      "loops",
+      "math"
+     ],
+     "qtype": "standard",
+     "languages": [
+      "c"
+     ],
+     "references": {
+      "c": "#include <stdio.h>\nint main(void){long n;if(scanf(\"%ld\",&n)!=1)return 0;int p=n>1;for(long i=2;i*i<=n;i++)if(n%i==0){p=0;break;}puts(p?\"Prime\":\"Not Prime\");return 0;}\n"
+     },
+     "starter": {},
+     "tests": [
+      {
+       "input": "7\n",
+       "expected": "Prime\n",
+       "visibility": "sample"
+      },
+      {
+       "input": "12\n",
+       "expected": "Not Prime\n",
+       "visibility": "sample"
+      },
+      {
+       "input": "1\n",
+       "expected": "Not Prime\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "2\n",
+       "expected": "Prime\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "97\n",
+       "expected": "Prime\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "91\n",
+       "expected": "Not Prime\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "999983\n",
+       "expected": "Prime\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "0\n",
+       "expected": "Not Prime\n",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Star Triangle",
+     "statement": "Read n and print a right-angled triangle of `*` with n rows: row i has i stars, with no spaces.",
+     "input_format": "One integer n (1 \u2264 n \u2264 30).",
+     "output_format": "n lines of stars.",
+     "difficulty": "Easy",
+     "tags": [
+      "nested-loops",
+      "patterns"
+     ],
+     "qtype": "standard",
+     "languages": [
+      "c"
+     ],
+     "references": {
+      "c": "#include <stdio.h>\nint main(void){int n;if(scanf(\"%d\",&n)!=1)return 0;for(int i=1;i<=n;i++){for(int j=0;j<i;j++)putchar('*');putchar('\\n');}return 0;}\n"
+     },
+     "starter": {},
+     "tests": [
+      {
+       "input": "3\n",
+       "expected": "*\n**\n***\n",
+       "visibility": "sample"
+      },
+      {
+       "input": "1\n",
+       "expected": "*\n",
+       "visibility": "sample"
+      },
+      {
+       "input": "5\n",
+       "expected": "*\n**\n***\n****\n*****\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "2\n",
+       "expected": "*\n**\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "8\n",
+       "expected": "*\n**\n***\n****\n*****\n******\n*******\n********\n",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Complete the Code: Fibonacci",
+     "statement": "The program must read n (1 to 40) and print the n-th Fibonacci number, where F(1) = 1 and F(2) = 1. Complete the loop.",
+     "input_format": "One integer n (1 \u2264 n \u2264 40).",
+     "output_format": "F(n).",
+     "difficulty": "Easy",
+     "tags": [
+      "loops",
+      "sequences"
+     ],
+     "qtype": "complete",
+     "languages": [
+      "c"
+     ],
+     "references": {
+      "c": "#include <stdio.h>\nint main(void){int n;if(scanf(\"%d\",&n)!=1)return 0;long a=1,b=1;for(int i=3;i<=n;i++){long c=a+b;a=b;b=c;}printf(\"%ld\\n\",b);return 0;}\n"
+     },
+     "starter": {
+      "c": "#include <stdio.h>\n\nint main(void) {\n    int n;\n    if (scanf(\"%d\", &n) != 1) return 0;\n    long a = 1, b = 1;\n    for (int i = 3; i <= n; i++) {\n        /* TODO: move a and b one step forward */\n    }\n    printf(\"%ld\\n\", b);\n    return 0;\n}\n"
+     },
+     "tests": [
+      {
+       "input": "5\n",
+       "expected": "5\n",
+       "visibility": "sample"
+      },
+      {
+       "input": "1\n",
+       "expected": "1\n",
+       "visibility": "sample"
+      },
+      {
+       "input": "2\n",
+       "expected": "1\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "10\n",
+       "expected": "55\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "40\n",
+       "expected": "102334155\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "20\n",
+       "expected": "6765\n",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Fix the Bug: Count Multiples",
+     "statement": "This program should read n and print how many numbers from 1 to n (inclusive) are divisible by 3. It gives a wrong count for some inputs. Fix it.",
+     "input_format": "One integer n (1 \u2264 n \u2264 10^5).",
+     "output_format": "The count.",
+     "difficulty": "Easy",
+     "tags": [
+      "loops",
+      "off-by-one"
+     ],
+     "qtype": "debug",
+     "languages": [
+      "c"
+     ],
+     "references": {
+      "c": "#include <stdio.h>\nint main(void){int n;if(scanf(\"%d\",&n)!=1)return 0;int c=0;for(int i=1;i<=n;i++)if(i%3==0)c++;printf(\"%d\\n\",c);return 0;}\n"
+     },
+     "starter": {
+      "c": "#include <stdio.h>\n\nint main(void) {\n    int n;\n    if (scanf(\"%d\", &n) != 1) return 0;\n    int count = 0;\n    for (int i = 1; i < n; i++) {\n        if (i % 3 == 0) count++;\n    }\n    printf(\"%d\\n\", count);\n    return 0;\n}\n"
+     },
+     "tests": [
+      {
+       "input": "9\n",
+       "expected": "3\n",
+       "visibility": "sample"
+      },
+      {
+       "input": "10\n",
+       "expected": "3\n",
+       "visibility": "sample"
+      },
+      {
+       "input": "3\n",
+       "expected": "1\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "2\n",
+       "expected": "0\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "30\n",
+       "expected": "10\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "1\n",
+       "expected": "0\n",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Predict the Output: Nested Loops",
+     "statement": "What does this program print?\n\n```c\n#include <stdio.h>\nint main(void){\n    for (int i = 1; i <= 3; i++) {\n        for (int j = 1; j <= i; j++) printf(\"%d\", i * j);\n        printf(\"\\n\");\n    }\n    return 0;\n}\n```\n\nType your answer exactly as the program prints it.",
+     "input_format": "",
+     "output_format": "",
+     "difficulty": "Easy",
+     "tags": [
+      "nested-loops"
+     ],
+     "qtype": "output",
+     "languages": [
+      "answer"
+     ],
+     "references": {
+      "answer": "1\n24\n369\n"
+     },
+     "starter": {},
+     "tests": [
+      {
+       "input": "",
+       "expected": "1\n24\n369\n",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Trace the Code: Loop with Break",
+     "statement": "Follow the loop carefully. What does it print?\n\n```c\n#include <stdio.h>\nint main(void){\n    int n = 27, steps = 0;\n    while (n != 1) {\n        if (n % 2 == 0) n /= 2;\n        else n = n * 3 + 1;\n        steps++;\n        if (steps == 5) break;\n    }\n    printf(\"%d %d\\n\", n, steps);\n    return 0;\n}\n```\n\nType your answer exactly as the program prints it.",
+     "input_format": "",
+     "output_format": "",
+     "difficulty": "Intermediate",
+     "tags": [
+      "while",
+      "tracing"
+     ],
+     "qtype": "trace",
+     "languages": [
+      "answer"
+     ],
+     "references": {
+      "answer": "31 5\n"
+     },
+     "starter": {},
+     "tests": [
+      {
+       "input": "",
+       "expected": "31 5\n",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Second Largest",
+     "statement": "Read n, then n integers. Print the second largest distinct value. If there is no such value, print `-1`.",
+     "input_format": "First line: n (1 \u2264 n \u2264 1000). Second line: n integers.",
+     "output_format": "The second largest distinct value, or -1.",
+     "difficulty": "Intermediate",
+     "tags": [
+      "arrays",
+      "logic"
+     ],
+     "qtype": "standard",
+     "languages": [
+      "c"
+     ],
+     "references": {
+      "c": "#include <stdio.h>\n#include <limits.h>\nint main(void){int n;if(scanf(\"%d\",&n)!=1)return 0;long a=LONG_MIN,b=LONG_MIN,x;for(int i=0;i<n;i++){scanf(\"%ld\",&x);if(x>a){b=a;a=x;}else if(x<a&&x>b)b=x;}if(b==LONG_MIN)puts(\"-1\");else printf(\"%ld\\n\",b);return 0;}\n"
+     },
+     "starter": {},
+     "tests": [
+      {
+       "input": "5\n3 9 4 9 1\n",
+       "expected": "4\n",
+       "visibility": "sample"
+      },
+      {
+       "input": "3\n7 7 7\n",
+       "expected": "-1\n",
+       "visibility": "sample"
+      },
+      {
+       "input": "2\n1 2\n",
+       "expected": "1\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "1\n5\n",
+       "expected": "-1\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "6\n-1 -2 -3 -4 -5 -6\n",
+       "expected": "-2\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "4\n10 10 9 9\n",
+       "expected": "9\n",
+       "visibility": "hidden"
+      },
+      {
+       "input": "5\n1 2 3 4 5\n",
+       "expected": "4\n",
+       "visibility": "hidden"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

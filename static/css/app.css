@@ -420,7 +420,8 @@ body.with-side .strip { margin-top: auto; }
   .desktop-only { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 8px; position: fixed; inset: 0; z-index: 1000;
     padding: 28px; background: var(--bg); color: var(--text); }
   .desktop-only p { color: var(--muted); max-width: 380px; }
-  body > *:not(.desktop-only):not(#toasts) { display: none !important; }
+  body:not(.admin) > *:not(.desktop-only):not(#toasts) { display: none !important; }
+  body.admin > .desktop-only { display: none; }
 }
 .heat { display: flex; gap: 3px; overflow: hidden; }
 .heat > div { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
@@ -580,3 +581,51 @@ body.with-side #app > .container, body.with-side #app > div > .container { width
 
 /* exam lockdown: no copying the problem text */
 #ws.nocopy .prose, #ws.nocopy .ws-left { -webkit-user-select: none; user-select: none; }
+
+/* practice modules */
+.modgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.modcard { display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); font: inherit; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+.modcard:hover { border-color: var(--accent); }
+.modcard.on { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+
+/* ---------- forms: every field in a row lines up (label on one line, hint under the control) ---------- */
+label.field > .lbl { display: block; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+label.field > .hint { display: block; line-height: 1.4; }
+.fcheck { display: flex; align-items: center; min-height: 36px; margin-top: 23px; }
+.grid > label.field, .grid > .fcheck { min-width: 0; }
+.textarea { height: auto; min-height: 84px; padding: 9px 11px; line-height: 1.5; resize: vertical; }
+/* ---------- competition assistant ---------- */
+.asst { padding: 18px 20px; margin-bottom: 16px; background: linear-gradient(180deg, var(--accent-soft), var(--surface) 70px); }
+.asst-head { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; } .asst-head h3 { margin: 0; }
+.asst-ico { width: 38px; height: 38px; border-radius: 11px; display: grid; place-items: center; background: var(--accent); color: #fff; flex: none; }
+.asst-log { display: flex; flex-direction: column; gap: 10px; max-height: 460px; overflow: auto; }
+.asst-log:not(:empty) { margin-bottom: 12px; }
+.asst-msg { max-width: 760px; padding: 12px 14px; border-radius: 14px; font-size: 13.5px; }
+.asst-msg.me { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+.asst-msg.bot { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 4px; width: 100%; }
+.asst-qs > div { padding: 6px 0; border-bottom: 1px solid var(--border); gap: 10px; } .asst-qs > div:last-child { border-bottom: 0; }
+.asst-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.chipbtn { font: inherit; font-size: 12.5px; text-align: left; padding: 7px 11px; border: 1px dashed var(--border-strong); border-radius: 999px; background: var(--surface); color: var(--text-2); cursor: pointer; }
+.chipbtn:hover { border-color: var(--accent); color: var(--accent); }
+.asst-form { display: flex; gap: 10px; align-items: flex-end; } .asst-form .input { height: auto; min-height: 44px; padding: 10px 12px; resize: vertical; line-height: 1.45; }
+.kv.tight { grid-template-columns: 96px 1fr; gap: 4px 12px; }
+
+/* ---------- organiser site: responsive down to tablet ---------- */
+#sideBtn { display: none; }
+.side-backdrop { display: none; }
+@media (max-width: 1180px) { .admin form .grid.g3 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 1000px) { .admin .content .grid[style*="360px"], .admin .content .grid[style*="340px"], .admin .content .grid[style*="320px"] { grid-template-columns: minmax(0, 1fr) !important; } }
+@media (max-width: 900px) {
+  #sideBtn { display: inline-flex; }
+  .admin .side.open + .main::before { content: ""; position: fixed; inset: 0; background: rgba(15, 15, 25, .35); z-index: 55; }
+  .admin .ph { align-items: flex-start; }
+  .admin .card-head { flex-wrap: wrap; }
+  .admin .kv { grid-template-columns: 120px 1fr; }
+  .asst-form { flex-direction: column; align-items: stretch; }
+}
+@media (max-width: 640px) {
+  .admin form .grid.g3, .admin form .grid.g2, .admin .grid.g4 { grid-template-columns: minmax(0, 1fr); }
+  .admin .content { padding: 14px 10px 50px; }
+  .admin .fcheck { margin-top: 0; }
+  .admin .mainbar .who span { display: none; }
+}

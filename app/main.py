@@ -10,6 +10,13 @@ from fastapi.staticfiles import StaticFiles
 from . import config, db
 
 db.init()
+if config.SEED_PRACTICE:  # the built-in C practice modules, added once per database
+    from . import seed
+    _c = db.connect()
+    try:
+        seed.load(_c)
+    finally:
+        _c.close()
 
 
 def admin_path() -> str:

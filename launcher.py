@@ -7,6 +7,7 @@ import http.server
 import ipaddress
 import json
 import os
+import re
 import secrets
 import shutil
 import signal
@@ -40,7 +41,8 @@ UPDATE_BRANCH = os.environ.get("UPDATE_BRANCH") or "main"
 UPD_DIR = config.DATA_DIR / "update-src"
 UPD_STATUS = config.DATA_DIR / "update-status.json"  # written by install.sh --update (result, rollback)
 RESET_F = config.DATA_DIR / "panel.reset"   # created (as root) by "astra-arena reset-panel-password": forget the app password
-DEFAULT = {"panel_pw": None, "auto_update": True, "update_token": "", "port": 8000, "bind": "0.0.0.0", "workers": None, "run_on_open": True, "running": True, "backup_mirror": "", "first_password": None, "auto_ip": True, "fixed_ip": None}
+DESKTOP_F = Path("/usr/share/applications/astra-arena.desktop")
+DEFAULT = {"icon_hidden": False, "web80": False, "panel_pw": None, "auto_update": True, "update_token": "", "port": 8000, "bind": "0.0.0.0", "workers": None, "run_on_open": True, "running": True, "backup_mirror": "", "first_password": None, "auto_ip": True, "fixed_ip": None}
 APT = {"c": "gcc", "cpp": "g++", "python": "python3", "java": "default-jdk-headless", "javascript": "nodejs", "go": "golang-go", "rust": "rustc"}
 PARTS = (("web", "app.main"), ("judge", "app.worker"))
 
@@ -386,6 +388,10 @@ def start():
     run.update(wanted=True, started_at=time.time(), last_error="")
     S["running"] = True
     save()
+    try:
+        web80(S["bind"] != "127.0.0.1")
+    except Exception:
+        pass
     for name, mod in PARTS:
         spawn(name, mod)
 
@@ -472,7 +478,7 @@ def status():
     open_, nxt = hostinfo.schedule_state(sched)
     up = {n: p.poll() is None for n, p in procs.items()}
     return {"running": bool(procs) and all(up.values()), "wanted": run["wanted"], "uptime": int(time.time() - run["started_at"]) if run["started_at"] else 0,
-            "restarts": run["restarts"], "last_error": run["last_error"], "job": run["job"], "settings": {k: v for k, v in S.items() if k not in ("update_token", "panel_pw")}, "admins": admin_names(), "shared": S["bind"] != "127.0.0.1", "specs": hostinfo.specs(), "usage": hostinfo.usage(),
+            "restarts": run["restarts"], "last_error": run["last_error"], "job": run["job"], "settings": {k: v for k, v in S.items() if k not in ("update_token", "panel_pw")}, "admins": admin_names(), "shared": S["bind"] != "127.0.0.1", "short_url": f"http://{urlparse(base_url()).hostname}/" if S.get("web80") else None, "specs": hostinfo.specs(), "usage": hostinfo.usage(),
             "ips": lan_ips(), "student_url": base_url() + "/", "admin_url": f"{base_url()}/{admin_route()}/",
             "schedule": sched, "open_now": open_ or bool(live), "next_open": nxt.strftime("%a %d %b %I:%M %p") if nxt else None,
             "live": [x["title"] for x in live], "signed_in_last_hour": online, "alerts": sysst["alerts"], "autostart": autostart_on(), "is_root": IS_ROOT,
@@ -672,6 +678,53 @@ def admin_names():
         c.close()
 
 
+# ---------- app icon: show it (app menu + desktop shortcut) or hide it from the whole computer ----------
+def apply_icon():
+    """Hidden: gone from the app menu, search and every user's desktop. The app keeps running; open it with `astra-arena`."""
+    if not IS_ROOT or not DESKTOP_F.exists():
+        return "The app icon is managed by the installer (sudo ./ubuntu/install.sh)."
+    hidden = bool(S.get("icon_hidden"))
+    t = re.sub(r"^NoDisplay=.*\n", "", DESKTOP_F.read_text(), flags=re.M)
+    DESKTOP_F.write_text(t.replace("Type=Application\n", f"Type=Application\nNoDisplay={'true' if hidden else 'false'}\n", 1))
+    homes = [h for h in Path("/home").iterdir() if h.is_dir()] if Path("/home").is_dir() else []
+    for home in homes:
+        for desk in (home / "Desktop", home / "Schreibtisch"):
+            f = desk / "astra-arena.desktop"
+            if hidden or not desk.is_dir():
+                f.unlink(missing_ok=True)
+                continue
+            st = desk.stat()
+            shutil.copy(DESKTOP_F, f)
+            os.chown(f, st.st_uid, st.st_gid)
+            os.chmod(f, 0o755)
+            # mark it trusted so a double-click runs it instead of asking (needs that user's session; harmless if it is not there)
+            sh("sudo", "-u", f"#{st.st_uid}", "env", f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{st.st_uid}/bus", "gio", "set", str(f), "metadata::trusted", "true", timeout=8)
+    sh("update-desktop-database", "-q", "/usr/share/applications")
+    return ("The app icon is hidden on this computer. To open the app later: press Alt+F2 (or open a terminal), type astra-arena and press Enter."
+            if hidden else "The app icon is back in the app menu and on the desktop.")
+
+
+# ---------- short link: also answer on the standard web port 80, so students can type just the address ----------
+def web80(on):
+    """Redirect port 80 to the platform's port (only when nothing else on this PC uses port 80). Removed again when off."""
+    if not (IS_ROOT and shutil.which("iptables")):
+        return False
+    for chain in ("PREROUTING", "OUTPUT"):
+        for line in sh("iptables", "-t", "nat", "-S", chain)[1].splitlines():
+            if "astra-arena" in line and line.startswith("-A "):
+                sh("iptables", "-t", "nat", "-D", *line[3:].split())
+    active = False
+    if on and S["port"] != 80 and port_free(80):
+        tail = ["-m", "comment", "--comment", "astra-arena", "-j", "REDIRECT", "--to-ports", str(S["port"])]
+        a = sh("iptables", "-t", "nat", "-A", "PREROUTING", "-p", "tcp", "--dport", "80", *tail)[0]
+        sh("iptables", "-t", "nat", "-A", "OUTPUT", "-p", "tcp", "--dport", "80", "-m", "addrtype", "--dst-type", "LOCAL", *tail)
+        active = a == 0
+    if S.get("web80") != active:
+        S["web80"] = active
+        save()
+    return active
+
+
 # ---------- one button: students on the college network can connect, or only this computer ----------
 def lan_test():
     """Does the student site answer on this PC's network addresses? (A firewall between buildings can still block it.)"""
@@ -711,7 +764,8 @@ def share(on):
     if not good:
         return "Sharing is on, but the student site is not answering yet. Run Diagnose & fix."
     note = "" if fw in ("ok", "No ufw firewall on this machine: nothing to open.") else f" Firewall: {fw}"
-    return f"Open to the college network. Students on the LAN open {base_url()}/ . Test it once from another PC.{note}"
+    short = f" Short link: http://{urlparse(base_url()).hostname}/ ." if S.get("web80") else ""
+    return f"Open to the college network. Students on the LAN open {base_url()}/ .{short} Test it once from another PC.{note}"
 
 
 def install_ai():
@@ -920,6 +974,10 @@ class Panel(http.server.BaseHTTPRequestHandler):
             if not pw:
                 return self.send(400, '{"error":"No organiser account with that username."}')
             return self.send(200, json.dumps({"ok": True, "message": "Temporary password created", "username": body.get("username"), "password": pw}))
+        elif path == "/api/icon":
+            S["icon_hidden"] = bool(body.get("hidden"))
+            save()
+            msg = apply_icon()
         elif path == "/api/share":
             msg = share(bool(body.get("on")))
         elif path == "/api/install_ai":
@@ -952,7 +1010,11 @@ def main():
         man = import_package(sys.argv[sys.argv.index("--import") + 1])
         print(f"Imported data from {man.get('from')} (package of {time.strftime('%d %b %Y %H:%M', time.localtime(man.get('created_at', 0)))})")
         return
+    if "--apply-icon" in sys.argv:  # used by the installer: keep the icon hidden if the operator hid it
+        print(apply_icon())
+        return
     if "--release-ip" in sys.argv:  # used by the uninstaller
+        web80(False)
         print("Released fixed address:", release_fixed_ip())
         return
     if "--fixed-ip" in sys.argv:  # used by the installer (the service is stopped meanwhile)

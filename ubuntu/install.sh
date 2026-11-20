@@ -73,6 +73,7 @@ if [ -n "$UNINSTALL" ]; then
     [ -n "$PURGE" ] || (set -a; . $ENVF; set +a; cd $APP && .venv/bin/python -c "import launcher; print('Final move package:', launcher.EXPORTS / launcher.make_package())") || true
   fi
   command -v ufw >/dev/null && ufw delete allow "$PORT/tcp" >/dev/null 2>&1 || true
+  rm -f /home/*/Desktop/astra-arena.desktop 2>/dev/null || true
   systemctl unmask sleep.target suspend.target hibernate.target hybrid-sleep.target >/dev/null 2>&1 || true
   rm -rf $APP $APP.prev /etc/systemd/system/$SVC.service /usr/local/bin/astra-arena /usr/share/applications/astra-arena.desktop /usr/share/icons/hicolor/scalable/apps/astra-arena.svg
   readlink /usr/local/bin/node 2>/dev/null | grep -q '^/opt/node-v' && rm -f /usr/local/bin/node && rm -rf /opt/node-v20.18.1-linux-*
@@ -268,6 +269,7 @@ Exec=/usr/local/bin/astra-arena reset-panel-password
 EOF
 } || warn "The app-menu icon could not be created. Open the control panel with the command: astra-arena"
 gtk-update-icon-cache -q /usr/share/icons/hicolor 2>/dev/null || true
+(set -a; . $ENVF; set +a; cd $APP && $PY launcher.py --apply-icon) || true   # desktop shortcut for each user; stays hidden if the operator hid it
 update-desktop-database -q /usr/share/applications 2>/dev/null || true
 
 say "Keeping the computer awake (a sleeping PC drops every student)"

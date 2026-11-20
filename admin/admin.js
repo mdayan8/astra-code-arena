@@ -15,6 +15,34 @@ const ICON = {
 };
 const MOD = { dashboard: 'Dashboard', competitions: 'Competitions', questions: 'Question Bank', practice: 'Practice', pdf: 'Question Import', ai: 'AI Studio', tests: 'Test Cases', participants: 'Participants',
   submissions: 'Submissions', leaderboards: 'Leaderboards', semesters: 'Semesters', reports: 'Reports', admins: 'Admin Users', audit: 'Audit Logs', database: 'Database', settings: 'System Settings' };
+// ---------- competition assistant (chat) ----------
+function assistantCard(after) {
+  let plan = {};
+  const TY = { standard: 'coding', debug: 'fix the bug', complete: 'complete the code', output: 'predict the output', trace: 'code tracing', prompt: 'prompt' };
+  const el = document.createElement('section'); el.className = 'card asst';
+  el.innerHTML = `<div class="asst-head"><div class="asst-ico">${ico('sparkles', 18)}</div><div><h3>Describe a competition</h3><div class="small muted">Say it in plain words. I build the plan and pick matching questions from the bank. You review it, then create the draft.</div></div></div>
+    <div class="asst-log" id="asLog"></div>
+    <div class="asst-chips" id="asChips">${['60 minute C round for 1st years tomorrow at 10am, 3 easy coding, 2 predict the output, 1 debug', '90 min Python and C round for 2nd and 3rd year, 2 medium coding, 2 code tracing, full screen, no internet', 'Practice quiz: 5 predict the output and 3 complete the code, 30 minutes, hide the leaderboard'].map((x) => `<button type="button" class="chipbtn">${esc(x)}</button>`).join('')}</div>
+    <form class="asst-form" id="asForm"><textarea class="input" id="asIn" rows="2" placeholder="For example: 45 minute C round for 1st years on Monday 2pm, 4 easy coding and 2 predict the output, auto submit after 3 warnings"></textarea><button class="btn primary">${ico('right', 14)} Send</button></form>`;
+  const log = $('#asLog', el), say = (who, html) => { log.insertAdjacentHTML('beforeend', `<div class="asst-msg ${who}">${html}</div>`); log.scrollTop = log.scrollHeight; };
+  const show = (r) => {
+    plan = r.plan;
+    say('bot', `<dl class="kv tight">${r.lines.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
+      ${r.questions.length ? `<div class="small" style="font-weight:600;margin:10px 0 4px">Questions (${r.questions.length})</div><div class="asst-qs">${r.questions.map((q, i) => `<div class="row between"><span><b>${String.fromCharCode(65 + i)}.</b> ${esc(q.title)}</span><span class="row" style="gap:4px"><span class="badge">${TY[q.qtype] || q.qtype}</span><span class="badge ${{ Easy: 'green', Intermediate: 'amber', Challenging: 'red' }[q.difficulty]}">${q.difficulty}</span></span></div>`).join('')}</div>` : ''}
+      ${r.problems.map((x) => `<div class="notice warn small" style="margin-top:8px">${esc(x)}</div>`).join('')}${r.todo.map((x) => `<div class="small muted" style="margin-top:6px">${esc(x)}</div>`).join('')}
+      ${r.ready ? `<div class="row" style="margin-top:12px;gap:8px"><button class="btn primary sm" data-as="create">${ico('check', 13)} Create draft competition</button><button class="btn sm" data-as="shuffle">Pick different questions</button><span class="small muted">or type a change, e.g. "make it 90 minutes"</span></div>` : ''}`);
+    const last = log.lastElementChild;
+    $('[data-as=create]', last)?.addEventListener('click', (e) => busy(e.target, async () => { const x = await POST(`${A}/assistant/competition`, { message: '', plan, create: true });
+      say('bot', `<div class="notice ok">${ico('check2', 15)} Draft created: <b>${esc(x.created.title)}</b>. It is not visible to students yet. <a href="#/competitions/${x.created.id}">Open it to review and publish</a>.</div>`); plan = {}; after && after(); }));
+    $('[data-as=shuffle]', last)?.addEventListener('click', async () => { const pl = { ...plan }; delete pl.picked; show(await POST(`${A}/assistant/competition`, { message: '', plan: pl })); });
+  };
+  const send = async (text) => { if (!text.trim()) return; say('me', esc(text)); $('#asIn', el).value = ''; $('#asChips', el).style.display = 'none';
+    try { show(await POST(`${A}/assistant/competition`, { message: text, plan })); } catch (e) { say('bot', `<div class="notice err small">${esc(e.message)}</div>`); } };
+  $('#asForm', el).onsubmit = (e) => { e.preventDefault(); send($('#asIn', el).value); };
+  $('#asIn', el).onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send($('#asIn', el).value); } };
+  $$('.chipbtn', el).forEach((b) => b.onclick = () => send(b.textContent));
+  return el;
+}
 const ldText = (l = {}) => [{ flag: 'internet reported', block: 'internet blocked', allow: 'internet allowed' }[l.internet || 'flag'], l.fullscreen === 'off' ? 'full screen optional' : 'full screen required',
   l.leave === 'allow' ? 'leaving allowed' : 'leaving warned', l.max_violations ? `auto-submit at ${l.max_violations} warnings` : '', l.no_copy ? 'no copy' : '', l.no_paste ? 'no paste' : ''].filter(Boolean).join(' · ');
 const icon = (k) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${ICON[k]}"/></svg>`;
@@ -22,7 +50,7 @@ const ROLE = { super_admin: 'Super Admin', event_admin: 'Event Admin', reviewer:
 const can = (m) => ME.modules.includes(m);
 const diffBadge = (d) => `<span class="badge ${{ Easy: 'green', Intermediate: 'amber', Challenging: 'red' }[d] || ''}">${esc(d)}</span>`;
 const qstatus = (s) => `<span class="badge ${{ approved: 'green', draft: '', archived: 'red' }[s] || ''}">${esc(s)}</span>`;
-const fld = (label, inner, hint = '') => `<label class="field">${label}${hint ? ` <span class="hint">${hint}</span>` : ''}${inner}</label>`;
+const fld = (label, inner, hint = '') => `<label class="field"><span class="lbl" title="${String(label).replace(/<[^>]*>/g, '').replace(/"/g, '&quot;')}">${label}</span>${inner}${hint ? `<span class="hint">${hint}</span>` : ''}</label>`;
 const inp = (name, v = '', attrs = '') => `<input class="input" name="${name}" value="${esc(v ?? '')}" ${attrs}>`;
 const ta = (name, v = '', attrs = '') => `<textarea class="textarea" name="${name}" ${attrs}>${esc(v ?? '')}</textarea>`;
 const sel = (name, opts, v, attrs = '') => `<select class="select" name="${name}" ${attrs}>${opts.map((o) => { const [val, lab] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(val)}" ${String(val) === String(v) ? 'selected' : ''}>${esc(lab)}</option>`; }).join('')}</select>`;
@@ -69,11 +97,13 @@ function start() {
   root.innerHTML = `<div class="shell"><aside class="side" id="side"><a class="brand" href="#/"><img src="${LOGO}" alt=""><span>ASTRA<small>Control Centre</small></span></a>
     ${ME.modules.map((m) => `<a href="#/${m === 'dashboard' ? '' : m}" data-m="${m}">${icon(m)}${MOD[m]}</a>`).join('')}
     <div class="grow"></div><div class="tiny faint" style="padding:10px">Server time ${esc(S.tz)}</div></aside>
-    <div class="main"><div class="mainbar"><button class="btn ghost sm" id="sideBtn" style="display:none">${ico('menu')}</button><div class="grow" id="crumb"></div>
+    <div class="main"><div class="mainbar"><button class="btn ghost sm" id="sideBtn" aria-label="Menu">${ico('menu')}</button><div class="grow" id="crumb"></div>
       <button class="btn ghost sm icon-btn" id="athemeBtn" title="Switch theme">${ico(document.body.dataset.theme === 'dark' ? 'sun' : 'moon', 18)}</button><div class="dropdown"><button class="btn ghost" id="ub"><span class="avatar">${esc(initials(ME.name))}</span><span class="small" style="text-align:left;line-height:1.2"><b>${esc(ME.name)}</b><br><span class="muted">${ROLE[ME.role]}</span></span></button>
       <div class="menu hidden" id="um"><button id="cpw">Change password</button><button id="lo">Sign out</button></div></div></div>
       <div class="content" id="view"></div></div></div>`;
-  if (innerWidth < 900) { $('#sideBtn').style.display = 'inline-flex'; $('#sideBtn').onclick = () => $('#side').classList.toggle('open'); }
+  $('#sideBtn').onclick = (e) => { e.stopPropagation(); $('#side').classList.toggle('open'); };
+  $('#side').addEventListener('click', (e) => { if (e.target.closest('a')) $('#side').classList.remove('open'); });
+  $('.main').addEventListener('click', () => $('#side').classList.remove('open'));
   $('#athemeBtn').onclick = () => { const t = document.body.dataset.theme === 'dark' ? 'light' : 'dark'; try { localStorage.setItem('astra:atheme', t); } catch (e) { /* ignore */ } document.body.dataset.theme = t; $('#athemeBtn').innerHTML = ico(t === 'dark' ? 'sun' : 'moon', 18); };
   $('#ub').onclick = (e) => { e.stopPropagation(); $('#um').classList.toggle('hidden'); };
   document.addEventListener('click', () => $('#um')?.classList.add('hidden'));
@@ -146,9 +176,10 @@ async function competitions() {
       <td class="small nowrap">${fmtTime(r.start_at)}</td><td class="small">${fmtMins(r.duration_min)}</td><td class="small">${r.languages.map(langName).join(', ')}</td><td class="num">${r.questions}</td><td class="num">${r.participants}</td></tr>`).join('')}</tbody></table></div>`
       : empty('No competitions yet', 'Create your first round. It starts as a draft so nothing is public until you publish.')}</div>`;
   $$('[data-id]', v).forEach((tr) => tr.onclick = () => nav('/competitions/' + tr.dataset.id));
+  if (can('competitions') && ME.role !== 'reviewer') $('.card', v).before(assistantCard());
 }
 
-const AVAIL = () => META?.available || {};
+const AVAIL =() => META?.available || {};
 async function compForm(id) {
   const c = id ? await GET(`${A}/competitions/${id}`) : { lockdown: {}, title: '', code: '', description: '', instructions: '## Rules\n- Individual participation only.\n- Read from standard input, write to standard output.\n- Do not share code during the contest.', academic_year: '', semester_label: '', round_no: 1, category: 'General', eligible_years: [], eligible_departments: [], registration_mode: 'open', duration_min: 90, languages: ['c', 'python'], max_marks: 100, scoring: { mode: 'partial', negative_marks: 0, first_blood_bonus: 0, penalty_minutes: 10, tie_break: 'penalty' }, leaderboard_visibility: 'live', show_test_counts: true, allow_late_join: false, auto_start: false, paste_policy: 'log', status: 'draft' };
   const LDc = { internet: 'flag', fullscreen: 'required', leave: 'warn', max_violations: 0, ...(c.lockdown || {}) };
@@ -158,7 +189,7 @@ async function compForm(id) {
   const steps = ['Basics', 'Schedule', 'Languages & scoring', 'Instructions', 'Review'];
   v.innerHTML = ph(id ? `Edit · ${c.title}` : 'New competition', id ? `Status: ${c.display_status}${locked ? ' · timing, languages and scoring are locked while running (use Pause/Extend)' : ''}` : 'Saved as a draft. Add questions next, then publish when ready.') +
     `<div class="steps" id="steps">${steps.map((s, i) => `<button type="button" data-s="${i}" class="${i ? '' : 'on'}"><span class="n">${i + 1}</span>${s}</button>`).join('')}</div>
-    <form class="card pad" id="cf" style="max-width:860px">
+    <form class="card pad" id="cf" style="max-width:1080px">
     <div data-step="0" class="stack">${fld('Title', inp('title', c.title, 'required maxlength=150 placeholder="Code Arena — Round 01"'))}
       <div class="grid g3">${fld('Competition code', inp('code', c.code, 'required placeholder="ASTRA-ARENA-ROUND-01" style="text-transform:uppercase"'), 'unique')}${fld('Round number', inp('round_no', c.round_no, 'type=number min=0'))}${fld('Category', inp('category', c.category, 'list="cats"'))}</div>
       <datalist id="cats"><option>General</option><option>Beginner</option><option>Intermediate</option><option>Open</option><option>Practice round</option></datalist>
@@ -166,25 +197,25 @@ async function compForm(id) {
       ${fld('Short description', ta('description', c.description, 'rows=3 maxlength=5000'), 'shown on cards')}
       <div class="notice small">Participation: <b>Individual</b>. Each participant competes with their own account.</div></div>
     <div data-step="1" class="stack hidden"><div class="grid g3">${fld('Competition start', `<input class="input" type="datetime-local" name="start_at" value="${toLocalInput(c.start_at)}" ${locked ? 'disabled' : ''}>`, S.tz)}
-      ${fld('Duration (minutes)', inp('duration_min', c.duration_min, `type=number min=5 max=1440 ${locked ? 'disabled' : ''}`))}<div style="padding-top:26px">${chk('auto_start', c.auto_start, 'Start automatically at this time')}</div></div>
+      ${fld('Duration (minutes)', inp('duration_min', c.duration_min, `type=number min=5 max=1440 ${locked ? 'disabled' : ''}`))}<div class="fcheck">${chk('auto_start', c.auto_start, 'Start automatically at this time')}</div></div>
       <div class="grid g2">${fld('Registration opens', `<input class="input" type="datetime-local" name="reg_start" value="${toLocalInput(c.reg_start)}">`, 'empty = now')}${fld('Registration closes', `<input class="input" type="datetime-local" name="reg_end" value="${toLocalInput(c.reg_end)}">`, 'empty = until start')}</div>
-      <div class="grid g2">${fld('Registration requirement', sel('registration_mode', [['open', 'Open: eligible students join themselves'], ['invite_only', 'Invite only: organisers assign participants']], c.registration_mode))}<div style="padding-top:26px">${chk('allow_late_join', c.allow_late_join, 'Allow joining after the deadline / during the contest')}</div></div>
+      <div class="grid g2">${fld('Registration requirement', sel('registration_mode', [['open', 'Open: eligible students join themselves'], ['invite_only', 'Invite only: organisers assign participants']], c.registration_mode))}<div class="fcheck">${chk('allow_late_join', c.allow_late_join, 'Allow joining after the deadline / during the contest')}</div></div>
       <div><div class="small" style="font-weight:550;margin-bottom:6px">Eligible years <span class="muted">(none = all)</span></div><div class="row wrap">${[1, 2, 3, 4].map((y) => chk('eligible_years', c.eligible_years.includes(y), `Year ${y}`, `value="${y}" data-multi="1" data-num="1"`)).join('')}</div></div>
       <div><div class="small" style="font-weight:550;margin-bottom:6px">Eligible departments <span class="muted">(none = all)</span></div><div class="row wrap">${[...new Set([...(META.departments || []), ...c.eligible_departments])].map((d) => chk('eligible_departments', c.eligible_departments.includes(d), esc(d), `value="${esc(d)}" data-multi="1"`)).join('') || '<span class="small muted">Add departments in System Settings.</span>'}</div></div></div>
-    <div data-step="2" class="stack hidden"><div><div class="small" style="font-weight:550;margin-bottom:6px">Programming languages for this competition</div><div class="row wrap">${Object.entries(META.languages).map(([k, l]) => chk('languages', c.languages.includes(k), `${esc(l.name)}${AVAIL()[k] ? '' : ' <span class="badge red">not installed on judge</span>'}`, `value="${k}" data-multi="1" ${locked ? 'disabled' : ''}`)).join('')}</div></div>
+    <div data-step="2" class="stack hidden"><div><div class="small" style="font-weight:550;margin-bottom:6px">Programming languages for this competition</div><div class="row wrap">${Object.entries(META.languages).filter(([k]) => k !== 'answer' && k !== 'prompt').map(([k, l]) => chk('languages', c.languages.includes(k), `${esc(l.name)}${AVAIL()[k] ? '' : ' <span class="badge red">not installed on judge</span>'}`, `value="${k}" data-multi="1" ${locked ? 'disabled' : ''}`)).join('')}</div></div>
       <div class="grid g3">${fld('Maximum marks', inp('max_marks', c.max_marks, 'type=number min=1'), 'for semester scaling')}${fld('Scoring mode', sel('sc_mode', [['partial', 'Partial marks by test weight'], ['all_or_nothing', 'Fixed marks: all tests must pass']], sc.mode, locked ? 'disabled' : ''))}
         ${fld('Tie-break', sel('sc_tie_break', [['penalty', 'Penalty time (time + wrong attempts)'], ['time', 'Earliest time to reach score']], sc.tie_break, locked ? 'disabled' : ''))}</div>
       <div class="grid g3">${fld('Negative marks per wrong submission', inp('sc_negative_marks', sc.negative_marks, `type=number min=0 step=0.5 ${locked ? 'disabled' : ''}`), '0 = off')}${fld('First-correct bonus', inp('sc_first_blood_bonus', sc.first_blood_bonus, `type=number min=0 ${locked ? 'disabled' : ''}`), '0 = off')}
         ${fld('Penalty minutes per wrong attempt', inp('sc_penalty_minutes', sc.penalty_minutes, `type=number min=0 ${locked ? 'disabled' : ''}`), 'tie-break only')}</div>
       <div class="grid g3">${fld('Leaderboard visibility', sel('leaderboard_visibility', [['live', 'Live during the contest'], ['after_end', 'Automatically when it ends'], ['hidden', 'Manually: I publish results']], c.leaderboard_visibility))}
         ${fld('Fair-play paste policy', sel('paste_policy', [['log', 'Allow paste, record it'], ['block_external', 'Block pastes from outside the editor'], ['allow', 'Allow, do not flag']], c.paste_policy))}
-        <div style="padding-top:26px">${chk('show_test_counts', c.show_test_counts, 'Show students how many tests passed')}</div></div>
+        <div class="fcheck">${chk('show_test_counts', c.show_test_counts, 'Show students how many tests passed')}</div></div>
       <div class="card pad stack" style="background:var(--surface-2,transparent)"><div><h4 style="margin:0">Exam lockdown</h4><div class="small muted">What students may do during this round. Use stricter rules for exams, and allow internet for online, research or prompt rounds.</div></div>
-        <div class="grid g3">${fld('Internet', sel('ld_internet', [['flag', 'Detect and report to organisers'], ['block', 'Block: test hidden while the PC has internet'], ['allow', 'Allowed (online / prompt rounds)']], LDc.internet))}
-          ${fld('Full screen', sel('ld_fullscreen', [['required', 'Required: test hidden outside full screen'], ['off', 'Not required']], LDc.fullscreen))}
-          ${fld('Leaving the test (other tab or app)', sel('ld_leave', [['warn', 'Hide the test and give a warning'], ['allow', 'Allowed, only recorded']], LDc.leave))}</div>
+        <div class="grid g3">${fld('Internet', sel('ld_internet', [['flag', 'Detect and report'], ['block', 'Block (test hidden while online)'], ['allow', 'Allowed']], LDc.internet))}
+          ${fld('Full screen', sel('ld_fullscreen', [['required', 'Required (test hidden outside it)'], ['off', 'Not required']], LDc.fullscreen))}
+          ${fld('Leaving the test (other tab or app)', sel('ld_leave', [['warn', 'Hide test + give a warning'], ['allow', 'Allowed, only recorded']], LDc.leave))}</div>
         <div class="grid g3">${fld('Auto-submit after warnings', inp('ld_max_violations', LDc.max_violations, 'type=number min=0 max=50'), '0 = never. Leaving full screen or the test window counts as one warning.')}
-          <div style="padding-top:26px">${chk('ld_no_copy', LDc.no_copy, 'Block copying (problem text and code)')}</div><div style="padding-top:26px">${chk('ld_no_paste', LDc.no_paste, 'Block all pasting, even inside the editor')}</div></div>
+          <div class="fcheck">${chk('ld_no_copy', LDc.no_copy, 'Block copying (problem text and code)')}</div><div class="fcheck">${chk('ld_no_paste', LDc.no_paste, 'Block all pasting, even inside the editor')}</div></div>
         <div class="notice small">${ico('alert', 14)} <b>Block internet</b> only works if the lab network itself has no internet during the round (for example a firewall rule for the exam). Otherwise every student's test stays hidden. Run a round with <b>Detect</b> first: the Fair-play tab shows how many PCs can reach the internet. A web page cannot switch off a PC's internet by itself.</div></div></div>
     <div data-step="3" class="stack hidden"><div class="grid g2" style="align-items:start">${fld('Instructions / rules (Markdown)', ta('instructions', c.instructions, 'rows=16 id="instr"'))}<div><div class="small muted" style="margin-bottom:5px">Preview</div><div class="card pad prose" id="instrPrev" style="min-height:300px"></div></div></div></div>
     <div data-step="4" class="hidden" id="review"></div>
@@ -467,7 +498,7 @@ async function questions(p) {
 function questionBodyFrom(form, Q, refs) {
   const f = formData(form);
   return { title: f.title, slug: f.slug || null, category: f.category, difficulty: f.difficulty, tags: (f.tags || '').split(',').map((x) => x.trim()).filter(Boolean), statement: f.statement, input_format: f.input_format,
-    output_format: f.output_format, constraints: f.constraints, languages: f.languages?.length ? f.languages : Object.keys(META.languages).filter((k) => k !== 'prompt'), time_limit_ms: f.time_limit_ms, memory_mb: f.memory_mb, max_marks: f.max_marks, practice: !!f.practice, references: refs,
+    output_format: f.output_format, constraints: f.constraints, languages: f.languages?.length ? f.languages : Object.keys(META.languages).filter((k) => k !== 'prompt' && k !== 'answer'), time_limit_ms: f.time_limit_ms, memory_mb: f.memory_mb, max_marks: f.max_marks, practice: !!f.practice, references: refs,
     qtype: f.qtype || 'standard', starter: Q.version.starter || {} };
 }
 
@@ -475,7 +506,7 @@ async function questionEditor(p) {
   const id = p ? Number(p.id) : null;
   const tab = p?.query?.t || 'statement';
   const v = view(id ? 'Question' : 'New question', skeleton(6), 'questions');
-  const Q = id ? await GET(`${A}/questions/${id}`) : { version: { title: '', statement: '', input_format: '', output_format: '', constraints: '', languages: Object.keys(META.languages).filter((k) => k !== 'prompt'), time_limit_ms: 2000, memory_mb: 256, max_marks: 100, validation: {}, qtype: 'standard', starter: {} }, category: 'Problem Solving', difficulty: 'Easy', tags: [], tests: [], references: {}, status: 'draft', practice: 0 };
+  const Q = id ? await GET(`${A}/questions/${id}`) : { version: { title: '', statement: '', input_format: '', output_format: '', constraints: '', languages: Object.keys(META.languages).filter((k) => k !== 'prompt' && k !== 'answer'), time_limit_ms: 2000, memory_mb: 256, max_marks: 100, validation: {}, qtype: 'standard', starter: {} }, category: 'Problem Solving', difficulty: 'Easy', tags: [], tests: [], references: {}, status: 'draft', practice: 0 };
   const V = Q.version;
   const tabs = id ? [['statement', 'Statement'], ['tests', `Test cases (${Q.tests.length})`], ['refs', 'Reference & validation'], ['preview', 'Student preview'], ['history', 'Versions & usage']] : [['statement', 'Statement']];
   const val = V.validation || {};
@@ -499,14 +530,14 @@ async function questionEditor(p) {
       ${fld('Constraints', ta('constraints', V.constraints, 'rows=3'))}
       ${!id ? `<div class="notice small">Sample cases are test cases marked <b>sample</b>; add them in the Test cases tab after saving.</div>` : ''}
       <div class="divider"></div>
-      <div class="grid g2">${fld('Question type', sel('qtype', [['standard', 'Standard: write the full program'], ['debug', 'Fix the bug: starter code has a bug'], ['complete', 'Complete the code: fill in the missing part'], ['prompt', 'Prompt challenge: students write an AI prompt (needs the AI model)']], V.qtype || 'standard'))}
+      <div class="grid g2">${fld('Question type', sel('qtype', [['standard', 'Standard: write the full program'], ['debug', 'Fix the bug: starter code has a bug'], ['complete', 'Complete the code: fill in the missing part'], ['output', 'Predict the output: students type what the code prints'], ['trace', 'Code tracing: students follow the code and type the final value'], ['prompt', 'Prompt challenge: students write an AI prompt (needs the AI model)']], V.qtype || 'standard'))}
         ${fld('Starter code language', sel('stlang', Object.keys(META.languages).map((k) => [k, META.languages[k].name]), 'c', 'id="stlang"'))}</div>
       ${fld('Starter code (optional, per language)', '<textarea class="textarea mono" id="stcode" rows="8" placeholder="Leave empty to give students the normal template. For Fix the bug, paste the buggy program; for Complete the code, mark the gap with a TODO comment."></textarea>')}</div>
       <div class="stack"><div class="card pad stack">${fld('Category', sel('category', META.categories, Q.category))}${fld('Difficulty', sel('difficulty', ['Easy', 'Intermediate', 'Challenging'], Q.difficulty))}
         ${fld('Topic tags', inp('tags', Q.tags.join(', '), 'placeholder="arrays, two pointers"'), 'comma separated')}${fld('Slug', inp('slug', Q.slug || '', 'placeholder="auto"'))}
         <div class="grid g2">${fld('Time limit (ms)', inp('time_limit_ms', V.time_limit_ms, 'type=number min=100 max=20000'))}${fld('Memory (MB)', inp('memory_mb', V.memory_mb, 'type=number min=16 max=2048'))}</div>
         ${fld('Default marks', inp('max_marks', V.max_marks, 'type=number min=1'))}${chk('practice', Q.practice, 'Show in student Practice when not in an active competition')}</div>
-        <div class="card pad"><div class="small" style="font-weight:550;margin-bottom:6px">Allowed languages</div><div class="stack tight">${Object.entries(META.languages).map(([k, l]) => chk('languages', V.languages.includes(k), esc(l.name), `value="${k}" data-multi="1"`)).join('')}</div></div>
+        <div class="card pad"><div class="small" style="font-weight:550;margin-bottom:6px">Allowed languages</div><div class="stack tight">${Object.entries(META.languages).filter(([k]) => k !== 'answer' && k !== 'prompt').map(([k, l]) => chk('languages', V.languages.includes(k), esc(l.name), `value="${k}" data-multi="1"`)).join('')}</div></div>
         <button class="btn primary lg" id="saveq">${id ? 'Save changes' : 'Create question'}</button></div></form>`;
     if (innerWidth < 1000) $('#qform').style.gridTemplateColumns = '1fr';
     Q.version.starter = { ...(V.starter || {}) };

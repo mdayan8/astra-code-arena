@@ -638,6 +638,44 @@ def run():
     evA.post(f"{A}/competitions/{c4['id']}/participants/{m3['id']}/reopen", expect=409)
     ok("exam lockdown: rules saved per competition and sanitised, sent to the arena, warnings counted on the server, auto-submit at the limit, organiser reopen resets the count")
 
+    print("Built-in C practice modules, written-answer questions, competition assistant")
+    pr = s3.get(f"{BASE}/api/student/practice")
+    mods = {x["category"] for x in pr}
+    assert {"C Basics", "C Logic Building"} <= mods and sum(x["category"] in ("C Basics", "C Logic Building") for x in pr) == 18, mods
+    qo = next(x for x in pr if x["title"] == "Predict the Output: Integer Division")
+    assert qo["qtype"] == "output" and s3.get(f"{BASE}/api/student/practice/{qo['id']}")["languages"] == ["answer"]
+    time.sleep(5.1)
+    r = s3.post(f"{BASE}/api/student/submissions", {"competition_id": None, "question_id": qo["id"], "language": "answer", "code": "3 3", "kind": "submit"})
+    assert wait_sub(s3, r["id"])["verdict"] == "WA"
+    time.sleep(5.1)
+    r = s3.post(f"{BASE}/api/student/submissions", {"competition_id": None, "question_id": qo["id"], "language": "answer", "code": "3 2\n", "kind": "submit"})
+    assert wait_sub(s3, r["id"])["verdict"] == "AC"
+    qs = next(x for x in pr if x["title"] == "Sum of Two Numbers")
+    time.sleep(5.1)
+    r = s3.post(f"{BASE}/api/student/submissions", {"competition_id": None, "question_id": qs["id"], "language": "c", "kind": "submit",
+                                                    "code": "#include <stdio.h>\nint main(){long a,b;scanf(\"%ld %ld\",&a,&b);printf(\"%ld\\n\",a+b);return 0;}\n"})
+    assert wait_sub(s3, r["id"])["verdict"] == "AC"
+    qd = next(x for x in pr if x["title"] == "Fix the Bug: Swap Two Numbers")
+    buggy = s3.get(f"{BASE}/api/student/practice/{qd['id']}")["starter"]["c"]
+    time.sleep(5.1)
+    r = s3.post(f"{BASE}/api/student/submissions", {"competition_id": None, "question_id": qd["id"], "language": "c", "code": buggy, "kind": "submit"})
+    assert wait_sub(s3, r["id"])["verdict"] == "WA"  # the shipped starter really is buggy
+    ok("two C practice modules ship with 18 validated questions; predict-the-output answers are judged as text; the bundled reference passes and the buggy starter fails")
+    plan = evA.post(f"{A}/assistant/competition", {"message": "45 minute C round for 1st years tomorrow at 10am, 2 easy coding and 1 predict the output, no internet, auto submit after 3 warnings"})
+    assert plan["ready"] and len(plan["questions"]) == 3 and plan["plan"]["duration_min"] == 45 and plan["plan"]["eligible_years"] == [1], plan
+    assert [q["qtype"] for q in plan["questions"]] == ["standard", "standard", "output"]
+    plan2 = evA.post(f"{A}/assistant/competition", {"message": "make it 90 minutes and add 2 code tracing questions", "plan": plan["plan"]})
+    assert plan2["plan"]["duration_min"] == 90 and len(plan2["questions"]) == 5 and plan2["plan"]["eligible_years"] == [1]
+    short = evA.post(f"{A}/assistant/competition", {"message": "30 hard prompt questions"})
+    assert not short["ready"] and short["problems"]
+    made = evA.post(f"{A}/assistant/competition", {"message": "", "plan": plan2["plan"], "create": True})["created"]
+    cm = evA.get(f"{A}/competitions/{made['id']}")
+    assert cm["status"] == "draft" and len(cm["questions"]) == 5 and cm["duration_min"] == 90 and cm["languages"] == ["c"]
+    assert cm["lockdown"]["internet"] == "block" and cm["lockdown"]["max_violations"] == 3 and cm["eligible_years"] == [1] and cm["start_at"]
+    assert [q["question_id"] for q in cm["questions"]] == [q["id"] for q in plan2["questions"]]  # the reviewed questions are the ones created
+    sup.delete(f"{A}/competitions/{made['id']}")
+    ok("competition assistant: plain description -> plan with matching questions, follow-up edits keep earlier details, shortages are reported, draft created exactly as reviewed")
+
     print("Rate limiting & recovery")
     bad = Client()
     codes = [bad.h.post(f"{A}/login", json={"username": "root", "password": "wrong"}).status_code for _ in range(8)]

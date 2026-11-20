@@ -43,6 +43,7 @@ BACKUP_MIRROR = env("BACKUP_MIRROR", "")                     # optional second f
 AI_BASE_URL = env("AI_BASE_URL", "")
 AI_MODEL = env("AI_MODEL", "")
 AI_API_KEY = env("AI_API_KEY", "")
+SEED_PRACTICE = env("SEED_PRACTICE", "1") != "0"  # ship the built-in C practice modules
 AI_TIMEOUT = int(env("AI_TIMEOUT", "180"))
 AI_CONCURRENCY = int(env("AI_CONCURRENCY", "2"))  # simultaneous AI calls (keeps RAM/CPU low on small servers)
 # Comma-separated CIDRs allowed to open the platform, e.g. "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16". Empty = allow all.
