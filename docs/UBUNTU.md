@@ -57,7 +57,7 @@ The installer:
 
 ## 4. Navigating the control panel
 
-Open **ASTRA Code Arena** from the app menu (purple hexagon icon). It opens as its own app window with its own icon, with no tabs and no address bar: through Chrome, Chromium, Edge or Brave in app mode when one is installed, otherwise through a small built-in window. A normal browser tab is used only if neither is available.
+Open **ASTRA Code Arena** from the app menu (purple hexagon icon). It opens as a native Ubuntu window with its own icon: no browser, no tabs, no address bar. Opening it twice brings the same window to the front. The first-time setup is a native window too. Only if the native window cannot start on a PC does it fall back to Chrome in app mode, and then to a browser tab; the reason is written to `~/.cache/astra-arena-app.log`.
 
 **This app only runs and manages the server** (start, stop, network, backups, updates). Competitions, questions and students are managed in the separate **organiser site**, with separate accounts.
 

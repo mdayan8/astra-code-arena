@@ -106,11 +106,13 @@ if [ -z "$UPDATE" ] || ! have_tools; then
     for p in $PKGS; do $APT install "$p" || echo "  could not install $p"; done
   fi
 fi
-# for the app's own window on PCs without Chrome/Chromium (optional: a browser tab is the fallback)
-if [ -z "$UPDATE" ] && ! command -v google-chrome google-chrome-stable chromium chromium-browser microsoft-edge >/dev/null 2>&1; then
+# the app's own native window (GTK + WebKit). Optional: without it the app opens through Chrome or a browser tab instead.
+if [ -z "$UPDATE" ] || ! python3 -c 'import gi; gi.require_version("WebKit2", "4.1")' 2>/dev/null && ! python3 -c 'import gi; gi.require_version("WebKit2", "4.0")' 2>/dev/null; then
   $APT install python3-gi gir1.2-gtk-3.0 >/dev/null 2>&1 || true
   $APT install gir1.2-webkit2-4.1 >/dev/null 2>&1 || $APT install gir1.2-webkit2-4.0 >/dev/null 2>&1 || true
 fi
+python3 -c 'import gi; gi.require_version("WebKit2", "4.1")' 2>/dev/null || python3 -c 'import gi; gi.require_version("WebKit2", "4.0")' 2>/dev/null \
+  || warn "The app's own window could not be installed, so the app opens through Chrome or a browser tab. Run the installer again with internet to fix."
 command -v python3 >/dev/null && python3 -c 'import venv, ensurepip' 2>/dev/null \
   || die "Python could not be installed. Connect this PC to the internet (the Ubuntu servers must be reachable) and press Try again."
 python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))' \
