@@ -14,11 +14,11 @@ WORDNUM = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5
 ORD = {"1st": 1, "first": 1, "2nd": 2, "second": 2, "3rd": 3, "third": 3, "4th": 4, "fourth": 4, "final": 4}
 MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
 DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-TYPES = [("debug", r"debug|fix(?:ing)? (?:the )?bug|bug ?fix|find the bug|\bbugs?\b"), ("complete", r"complet|fill in|fill the|missing code"),
+TYPES = [("mcq", r"mcq|multiple.?choice|objective|choose the|aptitude|fundamental|theory|concept"), ("debug", r"debug|fix(?:ing)? (?:the )?bug|bug ?fix|find the bug|\bbugs?\b"), ("complete", r"complet|fill in|fill the|missing code"),
          ("trace", r"trac|dry.?run"), ("output", r"output|predict"), ("prompt", r"prompt"),
          ("standard", r"coding|code writing|standard|programming|write (?:a |the )?(?:program|code)|logic")]
-TYPE_NAME = {"standard": "coding", "debug": "fix-the-bug", "complete": "complete-the-code", "output": "predict-the-output", "trace": "code-tracing", "prompt": "prompt", None: ""}
-DIFFS = [("Easy", r"easy|simple|beginner|basic"), ("Intermediate", r"medium|intermediate|moderate"), ("Challenging", r"hard|challenging|difficult|tough|advanced")]
+TYPE_NAME = {"standard": "coding", "debug": "fix-the-bug", "complete": "complete-the-code", "output": "predict-the-output", "trace": "code-tracing", "prompt": "prompt", "mcq": "multiple-choice", None: ""}
+DIFFS = [("Easy", r"easy|simple|beginner|basic"), ("Intermediate", r"medium|intermediate|moderate"), ("Challenging", r"hard|challenging|difficult|tough|advanced|\bhigh\b")]
 LANGS = [("cpp", r"c\+\+|\bcpp\b"), ("python", r"\bpython\b"), ("javascript", r"javascript|\bjs\b|node"), ("java", r"\bjava\b(?!script)"), ("c", r"(?<![\w+])c(?![\w+#])")]
 STOP = {"the", "and", "with", "for", "question", "questions", "problem", "problems", "each", "type", "types", "topic", "topics", "round", "on", "about", "of", "from", "in"}
 
@@ -171,7 +171,7 @@ def pick(c, plan):
                       "WHERE q.status='approved' AND qv.validated_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM competition_questions cq JOIN competitions co ON co.id=cq.competition_id "
                       "WHERE cq.question_id=q.id AND co.status IN ('published','live','paused'))")
     random.shuffle(pool)
-    chosen, short = [], []
+    chosen, short, missing = [], [], []
     for s in plan.get("questions") or []:
         words = [w for w in s.get("topic", "").split() if len(w) > 1]
 
@@ -179,7 +179,7 @@ def pick(c, plan):
             ql = db.jl(q["languages"])
             lang_ok = any(l in ("answer", "prompt") for l in ql) or any(l in langs for l in ql)
             hay = f"{q['title']} {q['category']} {q['tags']}".lower()
-            return (lang_ok and q["id"] not in {x["id"] for x in chosen} and (not s.get("type") or (q["qtype"] or "standard") == s["type"])
+            return (lang_ok and q["id"] not in {x["id"] for x in chosen} and (not s.get("type") or (q["qtype"] or "standard") == s["type"] or (s["type"] == "output" and q["qtype"] == "mcq" and "output" in hay))
                     and (not s.get("difficulty") or q["difficulty"] == s["difficulty"]) and (not use_topic or not words or any(w.rstrip("s") in hay for w in words)))
         got = [q for q in pool if ok(q)][:s["count"]]
         if len(got) < s["count"] and words:  # not enough on that topic: fill with the same type and level
@@ -191,7 +191,8 @@ def pick(c, plan):
             what = " ".join(x for x in [(s.get("difficulty") or "").lower(), TYPE_NAME[s.get("type")]] if x) or "matching"
             short.append(f"The question bank has only {len(got)} of the {s['count']} {what} questions you asked for (approved, validated, in {', '.join(langs)}). "
                          "Add more in Question Bank or AI Studio, or change the request.")
-    return chosen, short
+            missing.append({"count": s["count"] - len(got), "type": s.get("type"), "difficulty": s.get("difficulty"), "topic": s.get("topic") or ""})
+    return chosen, short, missing
 
 
 def describe(plan, chosen, short, now=None):
@@ -247,4 +248,6 @@ if __name__ == "__main__":  # self-check
     assert parse("at 9am", {}, [], now)["start_at"] == "2026-11-21T09:00"      # 9am already passed today -> tomorrow
     assert parse("5 hard questions on arrays", {}, [], now)["questions"] == [{"count": 5, "type": None, "difficulty": "Challenging", "topic": "arrays"}]
     assert "questions" not in parse("for 2nd year students, 90 minutes", {}, [], now)
+    assert parse("10 moderate mcq on pointers and 2 high coding", {}, [], now)["questions"] == [
+        {"count": 10, "type": "mcq", "difficulty": "Intermediate", "topic": "pointers"}, {"count": 2, "type": "standard", "difficulty": "Challenging", "topic": ""}]
     print("assistant self-check ok")

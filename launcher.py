@@ -597,7 +597,10 @@ form{background:#fff;border:1px solid #e4e4ee;border-radius:18px;padding:34px;wi
 p{color:#666a78;margin:0 0 20px;font-size:13.5px}input{width:100%;box-sizing:border-box;font:inherit;padding:11px 12px;border:1px solid #dcdbe8;border-radius:10px;margin-bottom:10px}
 input:focus{outline:2px solid #6d4aff33;border-color:#6d4aff}button{width:100%;border:0;border-radius:10px;padding:12px;font:inherit;font-weight:600;background:#6d4aff;color:#fff;cursor:pointer}
 #e{color:#c0283a;font-size:13px;min-height:20px;margin-top:10px}a{color:#6d4aff;font-size:13px;cursor:pointer}#help{display:none;text-align:left;background:#f3f2fa;border-radius:10px;padding:12px;font-size:13px;margin-top:12px}
-code{background:#fff;padding:1px 5px;border-radius:4px}</style></head><body>
+code{background:#fff;padding:1px 5px;border-radius:4px}
+[data-theme=dark] body{background:#0f0f15;color:#ececf3}[data-theme=dark] form{background:#17171f;border-color:#2a2a37}[data-theme=dark] input{background:#0f0f15;color:#ececf3;border-color:#2a2a37}
+[data-theme=dark] p{color:#9a9db0}[data-theme=dark] #help{background:#1e1e29}[data-theme=dark] code{background:#0f0f15}</style>
+<script>try{var t=localStorage.getItem('astra:theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'');if(t==='dark')document.documentElement.dataset.theme='dark'}catch(e){}</script></head><body>
 <form id=f><img src=/img/arena-logo.svg alt=""><h1>ASTRA Code Arena</h1><p>__INTRO__</p>
 <input name=p type=password placeholder="__PH__" autocomplete="__AC__" minlength=__MIN__ required autofocus>__SECOND__
 <button>__BTN__</button><div id=e></div><a id=fg>Forgot the password?</a>

@@ -278,3 +278,24 @@ Run **Diagnose & fix** in the control panel (or `astra-arena doctor`) first. It 
 | Service | `sudo systemctl status astra-arena` |
 | Logs | `astra-arena logs` |
 | Uninstall (data kept) | `sudo ./ubuntu/install.sh --uninstall` |
+
+## 12. Question types, placement practice and AI
+
+**Multiple choice.** In Question Bank choose the type *Multiple choice*, write the question (and any code) in the statement, fill the options and select the circle next to the correct one. Nothing else is needed: it is valid at once. In practice students may retry; in a competition the first answer is final, because with four options a second try would be a free guess.
+
+**Built-in practice.** Five modules ship with the platform and appear for students as a learning path, in the order campus placement tests are built: C Basics, C Logic Building, Predict the Output (multiple choice, C and pseudo-code), CS Fundamentals (multiple choice) and Coding Patterns. Every answer in them was produced by really compiling and running the code. Modules you add later join the path by themselves, and each module with five or more problems gets its own badge.
+
+**What adapts by itself.** The student's level moves up or down with their last few problems; recommendations follow their weakest topic; streaks, badges and module badges are awarded without any setup.
+
+**AI is optional and automatic.** If Ollama is installed, whichever model is there is used: no settings. In AI Studio you can pick another installed model from the list (it takes effect in about 20 seconds, no restart). To add a different model, run `ollama pull <name>` in a terminal and it shows up in that list.
+
+| In AI Studio | What it does |
+|---|---|
+| Coding problem | Writes the problem with C and Python solutions; the server runs both on every test and only then offers it for approval |
+| Multiple-choice set | Predict-the-output sets are checked by running the program (a wrong marked answer is corrected); concept sets need you to confirm the answer |
+| Grow practice automatically | When a student is nearly out of problems at their level, one new problem is written and published only if both solutions agree. At most 4 a day, never during a live round. Switch it off in AI Studio |
+
+**Competition by description.** On the Competitions page, type for example `placement mock: 10 moderate mcq, 5 predict the output, 2 medium coding, 60 minutes, full screen, no internet`. If the bank is short and AI is on, a button offers to write the missing questions; approve them in AI Studio, then pick again.
+
+**Light and dark.** The control app has an Auto / Light / Dark switch at the top. It changes only the control app, not the student or organiser sites (those have their own switch).
+

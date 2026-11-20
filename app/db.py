@@ -285,6 +285,7 @@ DEFAULT_SETTINGS = {
     "highlights_enabled": "true",
     "site_banner": "",
     "submit_cooldown_sec": "5",
+    "practice_autogrow": "true",      # when a student runs out of practice at their level, the AI writes a new sandbox-checked problem
     "departments": '["CSE", "ISE", "AIML", "CSE (DS)", "ECE", "EEE", "ME", "CV"]',  # edited by admins
 }
 
@@ -326,6 +327,8 @@ MIGRATIONS: list[str] = [
        ALTER TABLE competitions ADD COLUMN results_published_at INTEGER;""",
     # 7: exam lockdown rules per competition (internet, full screen, leaving the test, auto-submit, copy/paste)
     """ALTER TABLE competitions ADD COLUMN lockdown TEXT NOT NULL DEFAULT '{}';""",
+    # 8: multiple-choice options (JSON list of texts); the correct one is the expected text of the hidden test
+    "ALTER TABLE question_versions ADD COLUMN options TEXT NOT NULL DEFAULT '[]'",
 ]
 
 

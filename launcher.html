@@ -1,9 +1,12 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>ASTRA Arena · Control</title>
 <link rel="icon" href="/img/arena-logo.svg">
+<script>try{var t=localStorage.getItem('astra:theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
 <style>
 :root{--bg:#f4f4f9;--card:#fff;--text:#15151c;--muted:#6b6f7e;--line:#e6e6ef;--soft:#f3f2fa;--pri:#6d4aff;--pri2:#8b5cf6;--ok:#12a150;--warn:#b7791f;--err:#d92d3a;--shadow:0 1px 2px #1a124008,0 8px 24px #1a12400a}
-@media (prefers-color-scheme:dark){:root{--bg:#0f0f15;--card:#17171f;--text:#ececf3;--muted:#9a9db0;--line:#2a2a37;--soft:#1e1e29;--shadow:0 1px 2px #0006}}
+:root[data-theme=light]{color-scheme:light}
+:root[data-theme=dark]{--bg:#0f0f15;--card:#17171f;--text:#ececf3;--muted:#9a9db0;--line:#2a2a37;--soft:#1e1e29;--shadow:0 1px 2px #0006;color-scheme:dark}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0f0f15;--card:#17171f;--text:#ececf3;--muted:#9a9db0;--line:#2a2a37;--soft:#1e1e29;--shadow:0 1px 2px #0006;color-scheme:dark}}
 *{box-sizing:border-box}html{scroll-behavior:smooth}
 body{margin:0;font:14px/1.5 Inter,system-ui,Ubuntu,"Segoe UI",sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
 .bar-top{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 82%,transparent);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
@@ -11,14 +14,18 @@ body{margin:0;font:14px/1.5 Inter,system-ui,Ubuntu,"Segoe UI",sans-serif;backgro
 h1{font-size:16px;margin:0;letter-spacing:-.01em}h3{margin:0 0 12px;font-size:14.5px;letter-spacing:-.01em}
 main{max-width:1080px;margin:0 auto;padding:22px 24px 60px}
 .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.wide{grid-column:1/-1}
-.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:var(--shadow)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:12px;min-width:0}
+.card>h3,.card>dl,.card>ol{margin:0}.foot{margin-top:auto;padding-top:4px}.sec{grid-column:1/-1;margin:16px 2px -6px;font-size:11.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.f2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.field{display:grid;gap:4px;font-size:12.5px;color:var(--muted);min-width:0}.field input,.field select{width:100%;min-width:0}
+.opt{display:grid;grid-template-columns:22px 1fr;align-items:start;cursor:pointer}.opt input{margin:3px 0 0}.head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.split{border-top:1px solid var(--line);padding-top:12px}
 .muted{color:var(--muted)}.small{font-size:12.5px}
 .btn{border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:10px;padding:8px 14px;font:inherit;font-weight:550;cursor:pointer;transition:border-color .15s,background .15s,transform .05s}
 .btn:hover{border-color:var(--pri)}.btn:active{transform:translateY(1px)}.btn:disabled{opacity:.55;cursor:default}
 .btn.pri{background:var(--pri);color:#fff;border-color:var(--pri)}.btn.pri:hover{background:#5b3de6}.btn.big{padding:12px 22px;font-size:14.5px;font-weight:650;border-radius:12px}
 .btn.red{color:var(--err)}.btn.ghost{border-color:transparent;background:none;color:var(--muted)}.btn.ghost:hover{background:var(--soft);color:var(--text)}
 .pill{display:inline-flex;align-items:center;gap:7px;padding:5px 12px;border-radius:99px;font-weight:650;font-size:12.5px}
-.pill.on{background:#e3f7ec;color:var(--ok)}.pill.off{background:var(--soft);color:var(--muted)}.pill.warn{background:#fff3dc;color:var(--warn)}
+.pill.on{background:color-mix(in srgb,var(--ok) 16%,transparent);color:var(--ok)}.pill.off{background:var(--soft);color:var(--muted)}.pill.warn{background:color-mix(in srgb,#e0a100 20%,transparent);color:var(--warn)}
 .dot{width:8px;height:8px;border-radius:50%;background:currentColor}.pill.on .dot{box-shadow:0 0 0 0 currentColor;animation:pulse 1.8s infinite}
 @keyframes pulse{70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
 dl{display:grid;grid-template-columns:150px 1fr;gap:9px 12px;margin:0}dt{color:var(--muted)}dd{margin:0;font-weight:550;min-width:0;overflow-wrap:anywhere}
@@ -27,8 +34,8 @@ input:focus,select:focus{outline:3px solid color-mix(in srgb,var(--pri) 22%,tran
 input[type=checkbox]{accent-color:var(--pri);width:16px;height:16px;vertical-align:-3px;margin-right:6px}
 label{color:var(--text)}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .bar{height:8px;background:var(--soft);border-radius:9px;overflow:hidden;width:150px}.bar i{display:block;height:100%;border-radius:9px;background:linear-gradient(90deg,var(--pri),var(--pri2))}
-.alert{padding:11px 14px;border-radius:12px;margin-bottom:10px;background:#fff3dc;color:#7a4e00;border:1px solid #f3dfae}.alert.err{background:#fde8ea;color:#8f1d27;border-color:#f5c6cb}
-.alert code{background:#ffffffb8;color:#3a2a00;font-weight:650}.alert .btn{background:#fff;color:#3a2a00;border-color:#e6cf95}.alert a{color:#5b3de6}
+.alert{padding:11px 14px;border-radius:12px;margin-bottom:10px;background:color-mix(in srgb,#e0a100 13%,var(--card));color:var(--text);border:1px solid color-mix(in srgb,#e0a100 45%,var(--line))}.alert.err{background:color-mix(in srgb,var(--err) 12%,var(--card));border-color:color-mix(in srgb,var(--err) 45%,var(--line))}
+.alert code{background:var(--soft);color:var(--text);font-weight:650}.alert .btn{background:var(--card);color:var(--text)}
 a{color:var(--pri);text-decoration:none}a:hover{text-decoration:underline}code{background:var(--soft);padding:2px 7px;border-radius:6px;font-size:12.5px}
 pre{background:#101018;color:#d8d8e6;padding:12px;border-radius:12px;max-height:240px;overflow:auto;font-size:12px;white-space:pre-wrap}
 .day{padding:5px 9px;border:1px solid var(--line);border-radius:8px;cursor:pointer;user-select:none;font-size:12.5px}.day.on{background:var(--pri);color:#fff;border-color:var(--pri)}
@@ -49,13 +56,14 @@ pre{background:#101018;color:#d8d8e6;padding:12px;border-radius:12px;max-height:
 .hero h2{margin:0;font-size:23px;letter-spacing:-.02em}.hero .sub{opacity:.86;margin-top:4px}.hero .grow{flex:1;min-width:0}
 .hero .btn{background:#ffffff1f;border-color:#ffffff33;color:#fff}.hero .btn:hover{background:#ffffff33;border-color:#ffffff66}
 .stats{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap}.stat{background:#ffffff1a;border:1px solid #ffffff26;border-radius:12px;padding:8px 14px;min-width:104px}.stat b{display:block;font-size:17px}.stat span{font-size:11.5px;opacity:.82}
-.sharebox{grid-column:1/-1;display:flex;gap:18px;align-items:center;justify-content:space-between;flex-wrap:wrap}
-.sharebox .ico{width:44px;height:44px;border-radius:13px;display:grid;place-items:center;background:var(--soft);color:var(--pri);flex:none}.sharebox.on .ico{background:#e3f7ec;color:var(--ok)}
+.sharebox{grid-column:1/-1;display:flex;flex-direction:row;gap:18px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.sharebox .ico{width:44px;height:44px;border-radius:13px;display:grid;place-items:center;background:var(--soft);color:var(--pri);flex:none}.sharebox.on .ico{background:color-mix(in srgb,var(--ok) 16%,transparent);color:var(--ok)}
 .sharebox .t{font-size:15.5px;font-weight:650}
-@media (max-width:820px){.grid{grid-template-columns:minmax(0,1fr)}.hero{flex-direction:column;text-align:center}.stats{justify-content:center}.top{flex-wrap:wrap}dl{grid-template-columns:120px 1fr}.chk{grid-template-columns:18px 1fr}.chk>*:nth-child(n+3){grid-column:2}}
+@media (max-width:820px){.grid,.f2{grid-template-columns:minmax(0,1fr)}.hero{flex-direction:column;text-align:center}.stats{justify-content:center}.top{flex-wrap:wrap}dl{grid-template-columns:120px 1fr}.chk{grid-template-columns:18px 1fr}.chk>*:nth-child(n+3){grid-column:2}}
 </style></head><body>
 <div class="bar-top"><div class="top"><img src="/img/arena-logo.svg" alt=""><div><h1>ASTRA Code Arena</h1><div class="small muted">Server control panel</div></div><span class="sp"></span>
  <div class="tabs"><button class="tab on" data-tab="ctl">Control</button><button class="tab" data-tab="guide">Guide &amp; help</button></div><span id="state"></span>
+ <div class="tabs" id="theme" title="Appearance of this control screen"><button class="tab" data-th="auto">Auto</button><button class="tab" data-th="light">Light</button><button class="tab" data-th="dark">Dark</button></div>
  <button class="btn ghost" id="chpw">Change password</button><button class="btn ghost" id="logout">Sign out</button></div></div>
 <main>
 <div id="guide" class="card prose" style="display:none"></div><div id="ctl">
@@ -72,54 +80,63 @@ pre{background:#101018;color:#d8d8e6;padding:12px;border-radius:12px;max-height:
    <div style="min-width:0"><div class="t" id="shareHead"></div><div class="small muted" id="shareSub"></div></div></div>
   <button class="btn big" id="shareBtn"></button>
  </section>
+ <div class="sec">Share</div>
  <section class="card"><h3>Links to share</h3><dl>
   <dt>Students</dt><dd><a id="surl" target="_blank"></a></dd>
   <dt>Address</dt><dd id="addr" class="small"></dd><dt>Organisers (private)</dt><dd><a id="aurl" target="_blank"></a></dd></dl>
-  <div class="row small" style="margin-top:12px">Organiser forgot their password? <select id="admSel"></select><button class="btn" id="admReset">Give a temporary password</button></div>
-  <div id="admOut" class="alert" style="display:none;margin-top:8px"></div>
-  <div id="pw" style="display:none;margin-top:12px" class="alert">Organiser site first login: user <code>admin</code>, password <code id="pwv"></code>. You must change it at first sign-in. <button class="btn" id="pwok">I saved it</button></div>
+  <div id="pw" style="display:none;margin:0" class="alert">Organiser site first login: user <code>admin</code>, password <code id="pwv"></code>. You must change it at first sign-in. <button class="btn" id="pwok">I saved it</button></div>
+  <div class="foot split"><div class="field">Organiser forgot their password?<div class="row" style="flex-wrap:nowrap"><select id="admSel" style="flex:1;min-width:0"></select><button class="btn" id="admReset" style="white-space:nowrap">Temporary password</button></div></div>
+   <div id="admOut" class="alert" style="display:none;margin:8px 0 0"></div></div>
  </section>
  <section class="card"><h3>This machine</h3><dl id="mach"></dl></section>
+
+ <div class="sec">Settings</div>
  <section class="card"><h3>Network</h3>
-  <div class="row"><label>Address <select id="bind"></select></label><label>Port <input id="port" type="number" min="1024" max="65535" style="width:90px"></label></div>
-  <div class="row" style="margin-top:8px"><label>Judge workers <input id="workers" type="number" min="1" max="8" style="width:70px" placeholder="auto"></label><span class="small muted" id="wrec"></span></div>
-  <div class="row" style="margin-top:8px"><label><input type="checkbox" id="autoip"> Keep a fixed address automatically (the student link never changes)</label></div>
-  <div class="row" style="margin-top:8px"><label><input type="checkbox" id="runopen"> Start the platform when this app opens</label></div>
-  <div class="row" style="margin-top:10px"><button class="btn pri" id="saveNet">Save</button><button class="btn" id="fw">Open port in firewall</button></div>
-  <div class="small muted" style="margin-top:6px">Students on the same LAN open the Students link. Student programs never get internet: each runs with no network.</div>
- </section>
- <section class="card"><h3>Opening hours</h3>
-  <label><input type="checkbox" id="schOn"> Only open at these times (never closes during a live round)</label>
-  <div id="wins" style="margin:8px 0"></div>
-  <div class="row"><button class="btn" id="addWin">Add window</button><button class="btn pri" id="saveSch">Save hours</button></div>
+  <div class="f2"><label class="field">Address<select id="bind"></select></label><label class="field">Port<input id="port" type="number" min="1024" max="65535"></label></div>
+  <label class="field">Judge workers <span id="wrec"></span><input id="workers" type="number" min="1" max="8" placeholder="auto"></label>
+  <label class="opt"><input type="checkbox" id="autoip"><span>Keep a fixed address automatically <span class="muted small">(the student link never changes)</span></span></label>
+  <label class="opt"><input type="checkbox" id="runopen"><span>Start the platform when this app opens</span></label>
+  <div class="foot"><div class="row"><button class="btn pri" id="saveNet">Save</button><button class="btn" id="fw">Open port in firewall</button></div>
+   <div class="small muted" style="margin-top:8px">Student programs never get internet: each one runs with no network.</div></div>
  </section>
  <section class="card"><h3>Keep it running</h3>
-  <label><input type="checkbox" id="auto"> Start automatically when this computer starts (even before anyone logs in)</label>
-  <div class="row" style="margin-top:10px"><label>Extra backup folder <input id="mirror" placeholder="e.g. D:\ArenaBackups or a USB drive" style="width:250px"></label><button class="btn" id="saveMirror">Save</button></div>
-  <div class="row" style="margin-top:10px"><button class="btn" id="iconBtn"></button><button class="btn" id="backup">Back up now</button><button class="btn red" id="quit">Stop and close</button></div>
-  <div class="small muted" style="margin-top:6px">Backups: hourly during a live round, every 6 hours otherwise, 30 kept. If the database is ever damaged it is restored from the newest good backup automatically.</div>
+  <label class="opt"><input type="checkbox" id="auto"><span>Start automatically when this computer starts <span class="muted small">(even before anyone logs in)</span></span></label>
+  <label class="field">Extra backup folder<div class="row" style="flex-wrap:nowrap"><input id="mirror" placeholder="e.g. a USB drive folder" style="flex:1"><button class="btn" id="saveMirror">Save</button></div></label>
+  <div class="row"><button class="btn" id="backup">Back up now</button><button class="btn" id="iconBtn"></button></div>
+  <div class="foot"><div class="small muted">Backups: hourly during a live round, every 6 hours otherwise, 30 kept. A damaged database is restored from the newest good backup by itself.</div>
+   <div class="row split" style="margin-top:10px"><button class="btn red" id="quit">Stop and close</button></div></div>
  </section>
- <section class="card wide"><div class="row" style="justify-content:space-between"><div><h3 style="margin:0">Updates</h3><div class="small muted" id="updInfo">Checking...</div></div>
+ <section class="card wide"><h3>Opening hours</h3>
+  <label class="opt"><input type="checkbox" id="schOn"><span>Only open at these times <span class="muted small">(never closes during a live round)</span></span></label>
+  <div id="wins"></div>
+  <div class="row"><button class="btn" id="addWin">Add window</button><button class="btn pri" id="saveSch">Save hours</button></div>
+ </section>
+
+ <div class="sec">Maintenance</div>
+ <section class="card wide"><div class="head"><div><h3 style="margin:0">Updates</h3><div class="small muted" id="updInfo">Checking...</div></div>
   <div class="row"><button class="btn" id="updCheck">Check now</button><button class="btn pri" id="updApply" style="display:none">Update now</button></div></div>
-  <div class="row" style="margin-top:10px"><label><input type="checkbox" id="updAuto"> Update automatically (checks GitHub every 30 minutes; never during a round or in the hour before one)</label></div>
-  <div class="row small" style="margin-top:8px"><label>Access token (only for a private GitHub repository) <input type="password" id="updTok" placeholder="github_pat_..." style="width:260px"></label><button class="btn" id="updTokSave">Save</button></div>
-  <div class="small muted" style="margin-top:6px">Every update takes a verified backup first, keeps all data, and if the new version does not start, the previous version is restored automatically.</div>
+  <label class="opt"><input type="checkbox" id="updAuto"><span>Update automatically <span class="muted small">(checks GitHub every 30 minutes; never during a round or in the hour before one)</span></span></label>
+  <details class="small"><summary class="muted" style="cursor:pointer">Private GitHub repository?</summary><div class="row" style="margin-top:8px"><input type="password" id="updTok" placeholder="Access token: github_pat_..." style="flex:1;min-width:200px"><button class="btn" id="updTokSave">Save</button></div></details>
+  <div class="small muted">Every update takes a verified backup first and keeps all data. If the new version does not start, the previous version is restored automatically.</div>
  </section>
  <section class="card wide"><h3>Move to another computer</h3>
-  <ol class="small" style="margin:0 0 12px;padding-left:18px;line-height:1.7">
+  <ol class="small" style="padding-left:18px;line-height:1.7">
    <li><b>Create a move package</b> here and save it (Downloads or a USB drive). It holds every competition, question, student, result and upload.</li>
-   <li>On the new computer: get the code, run <code>start.sh</code>, choose the package under "Moving from another computer", press Install. Everything is there, sized for that machine.</li>
-   <li><b>Remove</b> this computer as the host. On the same network, the new computer takes over the old address, so the student link stays the same.</li></ol>
+   <li>On the new computer: get the code, run <code>start.sh</code>, choose the package under "Moving from another computer", press Install.</li>
+   <li><b>Remove</b> this computer as the host. On the same network the new computer takes over the old address, so the student link stays the same.</li></ol>
   <div class="row"><button class="btn pri" id="mkpkg">Create move package</button><span id="pkglink" class="small"></span></div>
-  <div class="row" style="margin-top:12px"><label class="small">Bring data in from another computer: <input type="file" id="impf" accept=".zip"></label><button class="btn" id="impBtn">Import</button></div>
-  <div class="row" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)"><label class="small"><input type="checkbox" id="purge"> Also delete all data from this computer (a final package is kept in /var/backups)</label><button class="btn red" id="rmBtn">Remove from this computer</button></div>
+  <div class="row split"><label class="small">Bring data in from another computer: <input type="file" id="impf" accept=".zip"></label><button class="btn" id="impBtn">Import</button></div>
+  <div class="row split"><label class="opt small" style="flex:1;min-width:240px"><input type="checkbox" id="purge"><span>Also delete all data from this computer (a final package is kept in /var/backups)</span></label><button class="btn red" id="rmBtn">Remove from this computer</button></div>
  </section>
- <section class="card wide"><div class="row" style="justify-content:space-between"><div><h3 style="margin:0">Diagnose &amp; fix</h3><div class="small muted">Checks the server, judge, languages, database, backups, disk, memory, network, firewall and clock. Each problem shows its fix.</div></div><button class="btn pri" id="diag">Run checks</button></div><div id="job" class="alert" style="display:none;margin-top:10px"></div><div id="checks"></div></section>
- <section class="card wide"><div class="row" style="justify-content:space-between"><h3>Logs</h3><button class="btn" id="logsBtn">Show</button></div><pre id="logs" style="display:none"></pre></section>
+ <section class="card wide"><div class="head"><div><h3 style="margin:0">Diagnose &amp; fix</h3><div class="small muted">Checks the server, judge, languages, database, backups, disk, memory, network, firewall and clock. Each problem shows its fix.</div></div><button class="btn pri" id="diag">Run checks</button></div><div id="job" class="alert" style="display:none;margin:0"></div><div id="checks"></div></section>
+ <section class="card wide"><div class="head"><h3 style="margin:0">Logs</h3><button class="btn" id="logsBtn">Show</button></div><pre id="logs" style="display:none;margin:0"></pre></section>
 </div></div></main><div id="upd"></div><div id="msg"></div>
 <script>
 const T='__TOKEN__',$=s=>document.querySelector(s),DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 let st=null,wins=null,formInit=false;
+function setTheme(t){if(t==='auto')delete document.documentElement.dataset.theme;else document.documentElement.dataset.theme=t;
+ document.querySelectorAll('[data-th]').forEach(b=>b.classList.toggle('on',b.dataset.th===t));try{localStorage.setItem('astra:theme',t)}catch(e){}}
+{let t='auto';try{t=localStorage.getItem('astra:theme')||'auto'}catch(e){}setTheme(t);document.querySelectorAll('[data-th]').forEach(b=>b.onclick=()=>setTheme(b.dataset.th))}
 const toast=t=>{const m=$('#msg');m.textContent=t;m.style.display='block';clearTimeout(m._t);m._t=setTimeout(()=>m.style.display='none',3500)};
 async function post(u,b={}){const r=await fetch(u,{method:'POST',headers:{'X-Token':T,'Content-Type':'application/json'},body:JSON.stringify(b)});const j=await r.json();toast(j.error||(j.message&&j.message!=='ok'?j.message:'Done'));await load();return j}
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -211,7 +228,7 @@ function mdx(t){const e=s=>esc(s).replace(/`([^`]+)`/g,'<code>$1</code>').replac
   else if(l.startsWith('|')){let rows=[];while(i<lines.length&&lines[i].startsWith('|'))rows.push(lines[i++]);rows=rows.filter(r=>!/^\|[\s:|-]+\|$/.test(r)).map(r=>r.slice(1,-1).split('|').map(x=>x.trim()));h+=`<table><tr>${rows[0].map(c=>`<th>${e(c)}</th>`).join('')}</tr>${rows.slice(1).map(r=>`<tr>${r.map(c=>`<td>${e(c)}</td>`).join('')}</tr>`).join('')}</table>`;continue}
   else if(/^(\d+\.|-) /.test(l)){const ol=/^\d/.test(l);let it=[];while(i<lines.length&&/^(\d+\.|-) /.test(lines[i]))it.push(lines[i++].replace(/^(\d+\.|-) /,''));h+=`<${ol?'ol':'ul'}>${it.map(x=>`<li>${e(x)}</li>`).join('')}</${ol?'ol':'ul'}>`;continue}
   else if(l.trim())h+=`<p>${e(l)}</p>`;i++}return h}
-document.querySelectorAll('.tab').forEach(b=>b.onclick=async()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x===b));const g=b.dataset.tab==='guide';$('#ctl').style.display=g?'none':'';$('#guide').style.display=g?'block':'none';if(g&&!$('#guide').innerHTML)$('#guide').innerHTML=mdx(await (await fetch('/api/guide')).text())});
+document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=async()=>{document.querySelectorAll('[data-tab]').forEach(x=>x.classList.toggle('on',x===b));const g=b.dataset.tab==='guide';$('#ctl').style.display=g?'none':'';$('#guide').style.display=g?'block':'none';if(g&&!$('#guide').innerHTML)$('#guide').innerHTML=mdx(await (await fetch('/api/guide')).text())});
 $('#logsBtn').onclick=async()=>{const l=await (await fetch('/api/logs')).json();$('#logs').style.display='block';$('#logs').textContent=`--- web ---\n${l.web}\n--- judge ---\n${l.judge}`};
 load().then(()=>{if(st&&st.update&&st.update.auto&&!(Date.now()/1000-(st.update.checked_at||0)<600))fetch('/api/update',{method:'POST',headers:{'X-Token':T,'Content-Type':'application/json'},body:'{}'}).then(()=>load()).catch(()=>{})});
 setInterval(()=>{if(!document.hidden)load().catch(()=>{})},5000);

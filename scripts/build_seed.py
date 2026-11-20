@@ -102,11 +102,12 @@ LOGIC = [
          diff="Intermediate", tags=["arrays", "logic"], fmt_in="First line: n (1 ≤ n ≤ 1000). Second line: n integers.", fmt_out="The second largest distinct value, or -1."),
 ]
 
-modules = [{"category": "C Basics", "questions": BASICS}, {"category": "C Logic Building", "questions": LOGIC}]
-out = ROOT / "app" / "seed_c.json"
-out.write_text(json.dumps({"key": "c_practice_v1", "modules": modules}, indent=1))
-print(f"wrote {out}: " + ", ".join(f"{m['category']} ({len(m['questions'])})" for m in modules))
-for m in modules:
-    for q in m["questions"]:
-        if q["languages"] == ["answer"]:
-            print(f"  {q['title']} -> {q['tests'][0]['expected']!r}")
+if __name__ == "__main__":
+    modules = [{"category": "C Basics", "questions": BASICS}, {"category": "C Logic Building", "questions": LOGIC}]
+    out = ROOT / "app" / "seed_c.json"
+    out.write_text(json.dumps({"key": "c_practice_v1", "modules": modules}, indent=1))
+    print(f"wrote {out}: " + ", ".join(f"{m['category']} ({len(m['questions'])})" for m in modules))
+    for m in modules:
+        for q in m["questions"]:
+            if q["languages"] == ["answer"]:
+                print(f"  {q['title']} -> {q['tests'][0]['expected']!r}")

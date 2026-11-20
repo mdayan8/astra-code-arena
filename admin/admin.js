@@ -18,11 +18,11 @@ const MOD = { dashboard: 'Dashboard', competitions: 'Competitions', questions: '
 // ---------- competition assistant (chat) ----------
 function assistantCard(after) {
   let plan = {};
-  const TY = { standard: 'coding', debug: 'fix the bug', complete: 'complete the code', output: 'predict the output', trace: 'code tracing', prompt: 'prompt' };
+  const TY = { standard: 'coding', debug: 'fix the bug', complete: 'complete the code', output: 'predict the output', trace: 'code tracing', prompt: 'prompt', mcq: 'multiple choice' };
   const el = document.createElement('section'); el.className = 'card asst';
   el.innerHTML = `<div class="asst-head"><div class="asst-ico">${ico('sparkles', 18)}</div><div><h3>Describe a competition</h3><div class="small muted">Say it in plain words. I build the plan and pick matching questions from the bank. You review it, then create the draft.</div></div></div>
     <div class="asst-log" id="asLog"></div>
-    <div class="asst-chips" id="asChips">${['60 minute C round for 1st years tomorrow at 10am, 3 easy coding, 2 predict the output, 1 debug', '90 min Python and C round for 2nd and 3rd year, 2 medium coding, 2 code tracing, full screen, no internet', 'Practice quiz: 5 predict the output and 3 complete the code, 30 minutes, hide the leaderboard'].map((x) => `<button type="button" class="chipbtn">${esc(x)}</button>`).join('')}</div>
+    <div class="asst-chips" id="asChips">${['60 minute C round for 1st years tomorrow at 10am, 3 easy coding, 2 predict the output, 1 debug', '90 min Python and C round for 2nd and 3rd year, 2 medium coding, 2 code tracing, full screen, no internet', 'Placement mock: 10 moderate mcq, 5 predict the output, 2 medium coding, 60 minutes, full screen, no internet'].map((x) => `<button type="button" class="chipbtn">${esc(x)}</button>`).join('')}</div>
     <form class="asst-form" id="asForm"><textarea class="input" id="asIn" rows="2" placeholder="For example: 45 minute C round for 1st years on Monday 2pm, 4 easy coding and 2 predict the output, auto submit after 3 warnings"></textarea><button class="btn primary">${ico('right', 14)} Send</button></form>`;
   const log = $('#asLog', el), say = (who, html) => { log.insertAdjacentHTML('beforeend', `<div class="asst-msg ${who}">${html}</div>`); log.scrollTop = log.scrollHeight; };
   const show = (r) => {
@@ -30,10 +30,13 @@ function assistantCard(after) {
     say('bot', `<dl class="kv tight">${r.lines.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
       ${r.questions.length ? `<div class="small" style="font-weight:600;margin:10px 0 4px">Questions (${r.questions.length})</div><div class="asst-qs">${r.questions.map((q, i) => `<div class="row between"><span><b>${String.fromCharCode(65 + i)}.</b> ${esc(q.title)}</span><span class="row" style="gap:4px"><span class="badge">${TY[q.qtype] || q.qtype}</span><span class="badge ${{ Easy: 'green', Intermediate: 'amber', Challenging: 'red' }[q.difficulty]}">${q.difficulty}</span></span></div>`).join('')}</div>` : ''}
       ${r.problems.map((x) => `<div class="notice warn small" style="margin-top:8px">${esc(x)}</div>`).join('')}${r.todo.map((x) => `<div class="small muted" style="margin-top:6px">${esc(x)}</div>`).join('')}
+      ${r.filling ? `<div class="notice ok small" style="margin-top:8px">The AI is writing ${r.filling.started} question(s). They appear in <a href="#/ai">AI Studio</a> for you to approve; then come back and press "Pick different questions".${r.filling.skipped.length ? ' It cannot write ' + esc(r.filling.skipped.join(', ')) + ' questions: add those by hand.' : ''}</div>`
+        : r.missing?.length ? `<div class="row" style="margin-top:8px"><button class="btn sm" data-as="fill">${ico('sparkles', 13)} Write the ${r.missing.reduce((a, m) => a + m.count, 0)} missing question(s) with AI</button></div>` : ''}
       ${r.ready ? `<div class="row" style="margin-top:12px;gap:8px"><button class="btn primary sm" data-as="create">${ico('check', 13)} Create draft competition</button><button class="btn sm" data-as="shuffle">Pick different questions</button><span class="small muted">or type a change, e.g. "make it 90 minutes"</span></div>` : ''}`);
     const last = log.lastElementChild;
     $('[data-as=create]', last)?.addEventListener('click', (e) => busy(e.target, async () => { const x = await POST(`${A}/assistant/competition`, { message: '', plan, create: true });
       say('bot', `<div class="notice ok">${ico('check2', 15)} Draft created: <b>${esc(x.created.title)}</b>. It is not visible to students yet. <a href="#/competitions/${x.created.id}">Open it to review and publish</a>.</div>`); plan = {}; after && after(); }));
+    $('[data-as=fill]', last)?.addEventListener('click', (e) => busy(e.target, async () => show(await POST(`${A}/assistant/competition`, { message: '', plan, fill: true }))));
     $('[data-as=shuffle]', last)?.addEventListener('click', async () => { const pl = { ...plan }; delete pl.picked; show(await POST(`${A}/assistant/competition`, { message: '', plan: pl })); });
   };
   const send = async (text) => { if (!text.trim()) return; say('me', esc(text)); $('#asIn', el).value = ''; $('#asChips', el).style.display = 'none';
@@ -499,7 +502,9 @@ function questionBodyFrom(form, Q, refs) {
   const f = formData(form);
   return { title: f.title, slug: f.slug || null, category: f.category, difficulty: f.difficulty, tags: (f.tags || '').split(',').map((x) => x.trim()).filter(Boolean), statement: f.statement, input_format: f.input_format,
     output_format: f.output_format, constraints: f.constraints, languages: f.languages?.length ? f.languages : Object.keys(META.languages).filter((k) => k !== 'prompt' && k !== 'answer'), time_limit_ms: f.time_limit_ms, memory_mb: f.memory_mb, max_marks: f.max_marks, practice: !!f.practice, references: refs,
-    qtype: f.qtype || 'standard', starter: Q.version.starter || {} };
+    qtype: f.qtype || 'standard', starter: Q.version.starter || {},
+    options: f.qtype === 'mcq' ? [0, 1, 2, 3].map((i) => (f['opt' + i] || '').trim()).filter(Boolean) : [],
+    answer: f.qtype === 'mcq' ? (f['opt' + (form.querySelector('[name=correct]:checked')?.value ?? 0)] || '').trim() : ['output', 'trace'].includes(f.qtype) ? (f.answer || '') : '' };
 }
 
 async function questionEditor(p) {
@@ -530,9 +535,13 @@ async function questionEditor(p) {
       ${fld('Constraints', ta('constraints', V.constraints, 'rows=3'))}
       ${!id ? `<div class="notice small">Sample cases are test cases marked <b>sample</b>; add them in the Test cases tab after saving.</div>` : ''}
       <div class="divider"></div>
-      <div class="grid g2">${fld('Question type', sel('qtype', [['standard', 'Standard: write the full program'], ['debug', 'Fix the bug: starter code has a bug'], ['complete', 'Complete the code: fill in the missing part'], ['output', 'Predict the output: students type what the code prints'], ['trace', 'Code tracing: students follow the code and type the final value'], ['prompt', 'Prompt challenge: students write an AI prompt (needs the AI model)']], V.qtype || 'standard'))}
+      <div class="grid g2">${fld('Question type', sel('qtype', [['standard', 'Standard: write the full program'], ['debug', 'Fix the bug: starter code has a bug'], ['complete', 'Complete the code: fill in the missing part'], ['output', 'Predict the output: students type what the code prints'], ['trace', 'Code tracing: students follow the code and type the final value'], ['mcq', 'Multiple choice: students pick one of the options'], ['prompt', 'Prompt challenge: students write an AI prompt (needs the AI model)']], V.qtype || 'standard'))}
         ${fld('Starter code language', sel('stlang', Object.keys(META.languages).map((k) => [k, META.languages[k].name]), 'c', 'id="stlang"'))}</div>
-      ${fld('Starter code (optional, per language)', '<textarea class="textarea mono" id="stcode" rows="8" placeholder="Leave empty to give students the normal template. For Fix the bug, paste the buggy program; for Complete the code, mark the gap with a TODO comment."></textarea>')}</div>
+      <div id="mcqbox" class="stack tight"><div class="small" style="font-weight:600">Options <span class="muted" style="font-weight:400">· select the circle next to the correct one</span></div>
+        ${[0, 1, 2, 3].map((i) => `<div class="optrow"><input type="radio" name="correct" value="${i}" ${(V.options || [])[i] !== undefined && (V.options || [])[i] === (Q.references.answer || '').trim() || (!Q.references.answer && i === 0) ? 'checked' : ''} aria-label="Option ${i + 1} is correct"><input class="input" name="opt${i}" value="${esc((V.options || [])[i] || '')}" placeholder="Option ${'ABCD'[i]}"></div>`).join('')}
+        <div class="hint">Put the code or question in the Problem statement above. In a competition the student's first answer is final.</div></div>
+      <div id="ansbox">${fld('Correct answer', ta('answer', Q.references.answer || '', 'rows=3'), 'Exactly what the student must type. Spaces at line ends and blank lines at the end are ignored.')}</div>
+      <div id="stbox">${fld('Starter code (optional, per language)', '<textarea class="textarea mono" id="stcode" rows="8" placeholder="Leave empty to give students the normal template. For Fix the bug, paste the buggy program; for Complete the code, mark the gap with a TODO comment."></textarea>')}</div></div>
       <div class="stack"><div class="card pad stack">${fld('Category', sel('category', META.categories, Q.category))}${fld('Difficulty', sel('difficulty', ['Easy', 'Intermediate', 'Challenging'], Q.difficulty))}
         ${fld('Topic tags', inp('tags', Q.tags.join(', '), 'placeholder="arrays, two pointers"'), 'comma separated')}${fld('Slug', inp('slug', Q.slug || '', 'placeholder="auto"'))}
         <div class="grid g2">${fld('Time limit (ms)', inp('time_limit_ms', V.time_limit_ms, 'type=number min=100 max=20000'))}${fld('Memory (MB)', inp('memory_mb', V.memory_mb, 'type=number min=16 max=2048'))}</div>
@@ -546,6 +555,8 @@ async function questionEditor(p) {
     $('#stcode').value = Q.version.starter[stl] || '';
     $('#stlang').onchange = (e) => { stash(); stl = e.target.value; $('#stcode').value = Q.version.starter[stl] || ''; };
     $('#stcode').oninput = stash;
+    const qt = $('[name=qtype]', T), typeUI = () => { $('#mcqbox').hidden = qt.value !== 'mcq'; $('#ansbox').hidden = !['output', 'trace'].includes(qt.value); $('#stbox').hidden = ['mcq', 'output', 'trace'].includes(qt.value); };
+    qt.addEventListener('change', typeUI); typeUI();
     $('#qform').onsubmit = (e) => { e.preventDefault(); busy($('#saveq'), async () => { const b = questionBodyFrom(e.target, Q, Q.references); const r = id ? await PUT(`${A}/questions/${id}`, b) : await POST(`${A}/questions`, b); toast('Saved', 'ok'); nav(`/questions/${r.id}?t=${id ? 'statement' : 'tests'}`); }); };
   } else if (tab === 'tests') testsTab(T, Q);
   else if (tab === 'refs') refsTab(T, Q);
@@ -814,31 +825,57 @@ async function pdfDoc(p) {
   if ((await load()) === 'processing') every(async () => { if ((await load()) !== 'processing') clearTimers(); }, 2000);
 }
 
+const aiTabs = (on) => `<div class="tabs" style="margin-bottom:16px"><a class="${on === 'q' ? 'on' : ''}" href="#/ai">${ico('sparkles', 14)} Create questions</a><a class="${on === 't' ? 'on' : ''}" href="#/ai/tools">${ico('wand', 14)} Student helpers</a></div>`;
+const aiOff = (st) => `<div class="card pad aioff"><h3 style="margin:0">${ico('alert', 17)} The AI is switched off on this computer</h3><p class="small muted" style="margin:6px 0 10px">${esc(st.reason || '')}</p>
+  <ol class="small" style="margin:0;padding-left:18px;line-height:1.7"><li>On the server PC, open the <b>ASTRA Code Arena</b> app.</li><li>Press <b>Install AI model</b> and wait for it to finish (about 1 GB download).</li><li>Come back here and reload. Nothing else to set up.</li></ol>
+  <p class="tiny muted" style="margin:10px 0 0">Already use Ollama? Any model you have pulled is found by itself. Everything except this page works without AI.</p></div>`;
 async function aiPage() {
-  const v = view('AI Question Assistant', skeleton(4), 'ai');
+  const v = view('AI Studio', skeleton(4), 'ai');
   const [st, drafts, bank] = await Promise.all([GET(`${A}/ai/status`), GET(`${A}/drafts?source=ai`), GET(`${A}/questions`)]);
-  v.innerHTML = `<div class="tabs" style="margin-bottom:16px"><a class="on" href="#/ai">${ico('sparkles', 14)} Question generator</a><a href="#/ai/tools">${ico('wand', 14)} Tools Lab</a></div>` + ph('AI question assistant', 'Built for small local models. Each draft goes through a self-checking harness: the model writes the problem with C and Python solutions, the sandbox runs both on every test, and any disagreement is sent back to the model to fix (up to 3 rounds). The result lands in the Question Bank as an unapproved draft for a human to review.') +
-    `<div class="notice ${st.enabled && st.reachable !== false ? 'ok' : 'warn'}" style="margin-bottom:16px">${st.enabled ? (st.reachable === false ? `Configured model <b>${esc(st.model)}</b> is not reachable: ${esc(st.reason)}` : `Connected to <b>${esc(st.model)}</b>.`) : esc(st.reason)}</div>
-    <div class="grid g2" style="align-items:start"><form class="card pad stack" id="gf"><h3 style="margin:0">Generate a new question</h3>
-      <div class="grid g2">${fld('Topic', `<input class="input" name="topic" list="topics" required placeholder="Sliding window">`)}${fld('Difficulty', sel('difficulty', ['Easy', 'Intermediate', 'Challenging'], 'Easy'))}</div>
+  const on = st.enabled && st.reachable !== false;
+  const kind = sessionStorage.getItem('ai:kind') || 'code';
+  const KINDS = [['code', 'code', 'Coding problem', 'A full problem with solutions and hidden tests'], ['mcq', 'check', 'Multiple-choice set', 'Predict-the-output or concept questions'], ['var', 'layers', 'New version of a question', 'Same idea, new story and numbers']];
+  const topic = fld('Topic', `<input class="input" name="topic" list="topics" required placeholder="e.g. arrays, loops, pointers">`), diff = fld('Difficulty', sel('difficulty', [['Easy', 'Easy'], ['Intermediate', 'Moderate'], ['Challenging', 'Hard']], 'Easy'));
+  const STAT = { generating: ['Writing…', 'violet'], pending: ['Ready to review', 'blue'], approved: ['In question bank', 'green'], failed: ['Failed', 'red'], rejected: ['Rejected', ''] };
+  v.innerHTML = aiTabs('q') + ph('AI Studio', 'Tell the AI what you need. It writes the questions, the server checks them by really running the code, and nothing reaches students until you approve it.') +
+    (on ? `<div class="card pad aibar"><div class="row" style="gap:10px"><span class="dot ok"></span><div><b>AI is ready</b><div class="tiny muted">${st.auto ? 'Model chosen automatically from what is installed.' : 'Using the model you chose.'}</div></div></div>
+        <label class="row small" style="gap:8px">Model <select class="select" id="aiModel" style="width:auto;min-width:200px">${(st.models.length ? st.models : [st.model]).map((m) => `<option ${m === st.model ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></label>
+        <label class="check" title="When a student has almost no practice left at their level, the AI writes one new problem. It is published only if both of its solutions agree on every test. At most 4 a day, never during a live round.">
+          <input type="checkbox" id="aiGrow" ${st.autogrow ? 'checked' : ''}> Grow practice automatically</label></div>` : st.enabled ? `<div class="notice warn" style="margin-bottom:16px">The AI service is not answering: ${esc(st.reason)}</div>` : aiOff(st)) +
+    `<div class="how3"><div><b>1</b> You describe it</div><div><b>2</b> The AI writes it and the server tests it</div><div><b>3</b> You review and approve</div></div>
+    <section class="card pad" style="margin-top:16px"><h3 style="margin:0 0 10px">What do you want to make?</h3>
+      <div class="pick3">${KINDS.map(([k, ic, name, sub]) => `<button type="button" class="${k === kind ? 'on' : ''}" data-kind="${k}">${ico(ic, 18)}<span><b>${name}</b><small>${sub}</small></span></button>`).join('')}</div>
       <datalist id="topics">${META.categories.map((c) => `<option>${esc(c)}</option>`).join('')}</datalist>
-      <div class="grid g2">${fld('Reference language(s)', sel('language', ['C and Python', 'C', 'Python'], 'C and Python'))}${fld('Sample cases', '<input class="input" type="number" name="samples" value="2" min="1" max="5">')}</div>
-      ${fld('Problem style', '<input class="input" name="style" placeholder="campus story, short and clear">')}${fld('Constraints guidance', '<input class="input" name="constraints" placeholder="n ≤ 10^5, values fit in 32-bit int">')}
-      <button class="btn primary" ${st.enabled ? '' : 'disabled'}>${ico('sparkles')} Generate draft</button></form>
-      <div class="card pad stack"><h3 style="margin:0">Variation of an existing question</h3><p class="small muted" style="margin:0">Same learning objective, new scenario, wording and numbers.</p>
-        <select class="select" id="vq">${bank.map((q) => `<option value="${q.id}">${esc(q.title)}</option>`).join('')}</select><button class="btn" id="vb" ${st.enabled && bank.length ? '' : 'disabled'}>Create variation</button>
-        <div class="divider"></div><p class="small muted" style="margin:0">Test-case suggestions are in each question's <b>Test cases</b> tab.</p></div></div>
-    <section class="card" style="margin-top:18px"><div class="card-head"><h3>AI drafts</h3></div>${drafts.length ? `<table class="table"><tbody>${drafts.map(draftRow).join('')}</tbody></table>` : empty('No AI drafts yet')}</section>`;
-  $('#gf').onsubmit = (e) => { e.preventDefault(); busy($('button', e.target), async () => { await POST(`${A}/ai/generate`, formData(e.target)); toast('Generating… this can take a minute with a local model.', 'info'); goRoute(); }); };
-  $('#vb').onclick = () => busy($('#vb'), async () => { await POST(`${A}/ai/variation`, { question_id: Number($('#vq').value) }); toast('Generating variation…', 'info'); goRoute(); });
+      <form class="stack" id="gf" data-for="code" style="margin-top:14px"><div class="grid g2">${topic}${diff}</div>
+        <details><summary class="small muted">More options</summary><div class="grid g2" style="margin-top:10px">${fld('Solutions written in', sel('language', ['C and Python', 'C', 'Python'], 'C and Python'))}${fld('Examples shown to students', '<input class="input" type="number" name="samples" value="2" min="1" max="5">')}
+          ${fld('Story style', '<input class="input" name="style" placeholder="campus story, short and clear">')}${fld('Size limits', '<input class="input" name="constraints" placeholder="n up to 1000">')}</div></details>
+        <div class="row"><button class="btn primary" ${on ? '' : 'disabled'}>${ico('sparkles')} Write this problem</button><span class="small muted">Takes one to three minutes on a small PC.</span></div></form>
+      <form class="stack" id="mf" data-for="mcq" style="margin-top:14px"><div class="grid g2">${topic}${diff}</div>
+        <div class="grid g2">${fld('Kind', sel('style', [['output', 'Predict the output of a C program (answer checked by running it)'], ['concept', 'Concept / theory questions (you confirm the answer)']], 'output'))}${fld('How many', '<input class="input" type="number" name="count" value="5" min="1" max="10">')}</div>
+        <div class="row"><button class="btn primary" ${on ? '' : 'disabled'}>${ico('sparkles')} Write these questions</button></div></form>
+      <div class="stack" data-for="var" style="margin-top:14px">${fld('Question to make a new version of', `<select class="select" id="vq">${bank.map((q) => `<option value="${q.id}">${esc(q.title)}</option>`).join('')}</select>`)}
+        <div class="row"><button class="btn primary" id="vb" ${on && bank.length ? '' : 'disabled'}>${ico('sparkles')} Write a new version</button></div></div></section>
+    <section class="card" style="margin-top:18px"><div class="card-head"><h3>Your AI questions</h3><span class="small muted">Click one to see the checks, then open it to approve.</span></div>${drafts.length ? `<table class="table"><tbody>${drafts.map((g) => `<tr class="click" data-g="${g.id}">
+      <td><b>${esc(g.payload.title || g.payload.request?.topic || 'Untitled')}</b><div class="tiny muted">${fmtTime(g.created_at)}${g.creator ? ' · ' + esc(g.creator) : ' · automatic'}</div></td>
+      <td><span class="badge ${STAT[g.status][1]}">${g.status === 'generating' ? '<span class="spin" style="width:10px;height:10px"></span> ' : ''}${STAT[g.status][0]}</span></td>
+      <td class="right">${g.question_id ? `<a href="#/questions/${g.question_id}" onclick="event.stopPropagation()">Open question ${ico('right')}</a>` : ''}</td></tr>`).join('')}</tbody></table>` : empty('Nothing here yet', 'Questions the AI writes appear here.')}</section>`;
+  const showKind = (k) => { sessionStorage.setItem('ai:kind', k); $$('[data-kind]', v).forEach((b) => b.classList.toggle('on', b.dataset.kind === k)); $$('[data-for]', v).forEach((f) => { f.hidden = f.dataset.for !== k; }); };
+  $$('[data-kind]', v).forEach((b) => b.onclick = () => showKind(b.dataset.kind)); showKind(kind);
+  const setAI = (body) => PUT(`${A}/ai/settings`, body).then(() => toast('Saved', 'ok')).catch(fail);
+  if ($('#aiModel')) $('#aiModel').onchange = (e) => setAI({ model: e.target.value });
+  if ($('#aiGrow')) $('#aiGrow').onchange = (e) => setAI({ autogrow: e.target.checked });
+  $('#gf').onsubmit = (e) => { e.preventDefault(); busy($('button', e.target), async () => { await POST(`${A}/ai/generate`, formData(e.target)); toast('The AI is writing it. This page updates by itself.', 'info'); goRoute(); }); };
+  $('#mf').onsubmit = (e) => { e.preventDefault(); busy($('button', e.target), async () => { await POST(`${A}/ai/mcq`, formData(e.target)); toast('The AI is writing the questions. This page updates by itself.', 'info'); goRoute(); }); };
+  $('#vb').onclick = () => busy($('#vb'), async () => { await POST(`${A}/ai/variation`, { question_id: Number($('#vq').value) }); toast('The AI is writing a new version.', 'info'); goRoute(); });
   $$('[data-g]', v).forEach((tr) => tr.onclick = () => {
     const g = drafts.find((x) => x.id == tr.dataset.g);
-    modal({ title: `AI draft #${g.id}`, body: `<div class="row" style="margin-bottom:10px"><span class="badge">${esc(g.status)}</span><b>${esc(g.payload.title || '')}</b></div>
-      <div class="small muted" style="margin-bottom:6px">Harness log</div><div class="stack tight">${g.warnings.map((w) => `<div class="notice small ${/passed/.test(w) ? 'ok' : /fail|Still|timed/i.test(w) ? 'warn' : ''}">${esc(w)}</div>`).join('') || '<span class="small muted">Working…</span>'}</div>`,
-      actions: [...(g.question_id ? [{ label: 'Open question to review & approve', kind: 'primary', onClick: () => nav(`/questions/${g.question_id}?t=refs`) }] : []), ...(g.status !== 'rejected' ? [{ label: 'Reject', kind: 'danger', onClick: async () => { await POST(`${A}/drafts/${g.id}/reject`); goRoute(); } }] : []), { label: 'Close' }] });
+    modal({ title: g.payload.title || 'AI question', body: `<div class="row" style="margin-bottom:10px"><span class="badge ${STAT[g.status][1]}">${STAT[g.status][0]}</span></div>
+      <div class="small muted" style="margin-bottom:6px">What the checks found</div><div class="stack tight">${g.warnings.map((w) => `<div class="notice small ${/passed|Published/.test(w) ? 'ok' : /fail|Still|timed|wrong|could not|Not published/i.test(w) ? 'warn' : ''}">${esc(w)}</div>`).join('') || '<span class="small muted">Still working…</span>'}</div>`,
+      actions: [...(g.question_id ? [{ label: 'Open question to review & approve', kind: 'primary', onClick: () => nav(`/questions/${g.question_id}`) }] : []), ...(!['rejected', 'approved'].includes(g.status) ? [{ label: 'Reject', kind: 'danger', onClick: async () => { await POST(`${A}/drafts/${g.id}/reject`); goRoute(); } }] : []), { label: 'Close' }] });
   });
   if (drafts.some((g) => g.status === 'generating')) every(async () => { const d = await GET(`${A}/drafts?source=ai`).catch(() => []); if (!d.some((g) => g.status === 'generating')) { clearTimers(); goRoute(); } }, 3000);
 }
+
 
 // ================= AI Tools Lab =================
 const TOOL_ICONS = ['bulb', 'bot', 'sparkles', 'book', 'target', 'code', 'alert', 'chart', 'wand'];
@@ -846,26 +883,22 @@ async function toolsLab() {
   const v = view('AI Studio', skeleton(4), 'ai');
   const [d, comps] = await Promise.all([GET(`${A}/ai/tools`), GET(`${A}/competitions`)]);
   const aiOn = d.ai.enabled && d.ai.reachable !== false;
-  v.innerHTML = `<div class="tabs" style="margin-bottom:16px"><a href="#/ai">${ico('sparkles', 14)} Question generator</a><a class="on" href="#/ai/tools">${ico('wand', 14)} Tools Lab</a></div>` +
-    ph('Tools Lab', 'Describe a tool in plain words and the AI agent builds it: name, behaviour, form and limits. Test it here, then switch it on for a competition or for practice. Students see it in the workspace Assistant tab; every use is logged.') +
-    `${aiOn ? '' : `<div class="notice warn" style="margin-bottom:14px">AI is not configured or not reachable, so tools cannot run. Deploy with <code>./deploy.sh --with-ai</code> or set AI_BASE_URL / AI_MODEL.</div>`}
-    <form class="card pad onebox" id="qf"><div class="row" style="gap:10px;margin-bottom:10px"><span class="lsi">${ico('wand', 18)}</span><div><h3 style="margin:0">Describe it. We build it and switch it on.</h3><div class="small muted">One prompt: the agent designs the tool, creates it and deploys it where you choose.</div></div></div>
+  v.innerHTML = aiTabs('t') + ph('Student helpers', 'Small AI helpers students can use while solving, such as a hint button or an error explainer. You decide where each one is switched on (practice, or a chosen competition). Every use is logged.') +
+    `${aiOn ? '' : aiOff(d.ai.enabled ? { reason: 'The AI service is not answering right now.' } : await GET(`${A}/ai/status`))}
+    <form class="card pad onebox" id="qf"><div class="row" style="gap:10px;margin-bottom:10px"><span class="lsi">${ico('wand', 18)}</span><div><h3 style="margin:0">Describe a new helper</h3><div class="small muted">Say what it should do. Choose where students can use it, then create it.</div></div></div>
       <textarea class="textarea" name="request" rows="3" required placeholder="e.g. After a wrong answer, explain which edge case the student probably missed, in two sentences, without code"></textarea>
       <div class="row wrap" style="margin-top:10px;gap:14px">${chk('practice', true, 'Practice')}<select class="select" name="competition" style="width:auto;min-width:240px"><option value="">No competition</option>${comps.filter((c) => ['draft', 'published', 'live', 'paused'].includes(c.status)).map((c) => `<option value="${c.id}">${esc(c.code)} · ${esc(c.title)}</option>`).join('')}</select>
-        <div class="grow"></div><button class="btn primary lg" ${aiOn ? '' : 'disabled'}>${ico('sparkles', 15)} Create &amp; deploy</button></div><div id="qout"></div></form>
-    <div class="grid g2" style="align-items:start"><form class="card pad stack" id="df"><h3 style="margin:0" class="row">${ico('wand', 18)} Build a tool with the agent</h3>
-      <textarea class="textarea" name="request" rows="4" required placeholder="e.g. A debugging coach that asks the student two guiding questions about their failing test before revealing anything"></textarea>
-      <button class="btn primary" ${aiOn ? '' : 'disabled'}>${ico('sparkles', 14)} Design tool</button><div class="tiny muted">Tools are built from a safe form specification, never from generated code, so they cannot break or take over student pages.</div></form>
-      <div class="card pad stack"><h3 style="margin:0">Ready-made tools</h3>${Object.entries(d.presets).map(([k, p]) => `<div class="row between"><div class="row"><span class="lsi sm">${ico(p.icon, 15)}</span><div><b class="small">${esc(p.name)}</b><div class="tiny muted">${esc(p.description)}</div></div></div><button class="btn sm" data-preset="${k}">Add</button></div>`).join('')}</div></div>
-    <section class="card" style="margin-top:18px"><div class="card-head"><h3>Your tools</h3></div>${d.tools.length ? `<table class="table"><thead><tr><th>Tool</th><th>Status</th><th>Switched on for</th><th class="num">Uses</th><th></th></tr></thead><tbody>${d.tools.map((t) => `<tr>
+        <div class="grow"></div><button type="button" class="btn" id="df" ${aiOn ? '' : 'disabled'}>Preview before saving</button><button class="btn primary lg" ${aiOn ? '' : 'disabled'}>${ico('sparkles', 15)} Create &amp; switch on</button></div><div id="qout"></div></form>
+    <div><div class="card pad stack" style="margin-top:16px"><h3 style="margin:0">Ready-made helpers</h3><div class="small muted">Add one, then open it to switch it on.</div>${Object.entries(d.presets).map(([k, p]) => `<div class="row between"><div class="row"><span class="lsi sm">${ico(p.icon, 15)}</span><div><b class="small">${esc(p.name)}</b><div class="tiny muted">${esc(p.description)}</div></div></div><button class="btn sm" data-preset="${k}">Add</button></div>`).join('')}</div></div>
+    <section class="card" style="margin-top:18px"><div class="card-head"><h3>Your helpers</h3></div>${d.tools.length ? `<table class="table"><thead><tr><th>Tool</th><th>Status</th><th>Switched on for</th><th class="num">Uses</th><th></th></tr></thead><tbody>${d.tools.map((t) => `<tr>
       <td><div class="row"><span class="lsi sm">${ico(t.spec.icon || 'sparkles', 15)}</span><div><b>${esc(t.name)}</b><div class="tiny muted">${esc(t.spec.description || '')}</div></div></div></td>
       <td><span class="badge ${{ active: 'green', draft: '', off: 'amber' }[t.status]}">${esc(t.status)}</span></td>
       <td class="small">${[t.scope.practice ? 'Practice' : '', ...t.scope.competitions.map((id) => (comps.find((c) => c.id === id) || {}).code || '#' + id)].filter(Boolean).map(esc).join(', ') || '<span class="muted">nowhere yet</span>'}</td>
       <td class="num">${t.uses}</td><td class="right nowrap"><button class="btn xs" data-edit="${t.id}">Open</button> <button class="btn xs" data-uses="${t.id}">Usage</button> <button class="btn xs ghost" data-del="${t.id}">${ico('x', 13)}</button></td></tr>`).join('')}</tbody></table>`
-      : empty('No tools yet', 'Add a ready-made tool or describe a new one.')}</section>`;
+      : empty('No helpers yet', 'Add a ready-made helper or describe a new one.')}</section>`;
   $('#qf').onsubmit = (e) => { e.preventDefault(); busy($('button.lg', e.target), async () => { const f = formData(e.target); const t = await POST(`${A}/ai/tools/quick`, { request: f.request, scope: { practice: f.practice, competitions: f.competition ? [Number(f.competition)] : [] } });
     toast(`"${t.name}" is ${t.status === 'active' ? 'live for students' : 'saved as a draft (choose where to deploy it)'}`, 'ok'); goRoute(); }); };
-  $('#df').onsubmit = (e) => { e.preventDefault(); busy($('button', e.target), async () => { const spec = await POST(`${A}/ai/tools/design`, formData(e.target)); toolEditor({ spec, status: 'draft', scope: { competitions: [], practice: false } }, comps); }); };
+  $('#df').onclick = () => { const request = $('#qf [name=request]').value.trim(); if (!request) return toast('Describe the helper first.', 'info'); busy($('#df'), async () => { const spec = await POST(`${A}/ai/tools/design`, { request }); toolEditor({ spec, status: 'draft', scope: { competitions: [], practice: false } }, comps); }); };
   $$('[data-preset]', v).forEach((b) => b.onclick = () => busy(b, async () => { await POST(`${A}/ai/tools/presets/${b.dataset.preset}`); toast('Tool added as a draft. Open it to switch it on.', 'ok'); goRoute(); }));
   $$('[data-edit]', v).forEach((b) => b.onclick = () => toolEditor(d.tools.find((t) => t.id == b.dataset.edit), comps));
   $$('[data-del]', v).forEach((b) => b.onclick = async () => { if (await confirmBox('Delete this tool and its usage log?', { danger: true, ok: 'Delete' })) { await DEL(`${A}/ai/tools/${b.dataset.del}`); goRoute(); } });

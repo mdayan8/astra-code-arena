@@ -449,7 +449,7 @@ def run():
     st = s1.get(f"{BASE}/api/student/stats")
     got = {b["key"] for b in st["badges"] if b["earned"]}
     assert {"first_ac", "debut", "podium", "champion", "perfect", "speed"} <= got, got
-    assert st["solved"] >= 2 and sum(st["heatmap"].values()) >= 3 and st["streak"] >= 1 and len(st["badges"]) == 12
+    assert st["solved"] >= 2 and sum(st["heatmap"].values()) >= 3 and st["streak"] >= 1 and len(st["badges"]) >= 17 and any(b["key"].startswith("module:") for b in st["badges"])
     ok(f"badges computed from real results ({len(got)}/12 earned: champion, podium, perfect round, speedster…), streak + heatmap")
     sup.put(f"{A}/settings", {"departments": ["CSE", "ISE", "AIML", "cse"]})
     assert anon.get(f"{BASE}/api/public/info")["departments"] == ["CSE", "ISE", "AIML"]
@@ -663,7 +663,7 @@ def run():
     ok("two C practice modules ship with 18 validated questions; predict-the-output answers are judged as text; the bundled reference passes and the buggy starter fails")
     plan = evA.post(f"{A}/assistant/competition", {"message": "45 minute C round for 1st years tomorrow at 10am, 2 easy coding and 1 predict the output, no internet, auto submit after 3 warnings"})
     assert plan["ready"] and len(plan["questions"]) == 3 and plan["plan"]["duration_min"] == 45 and plan["plan"]["eligible_years"] == [1], plan
-    assert [q["qtype"] for q in plan["questions"]] == ["standard", "standard", "output"]
+    assert [q["qtype"] for q in plan["questions"]][:2] == ["standard", "standard"] and plan["questions"][2]["qtype"] in ("output", "mcq")
     plan2 = evA.post(f"{A}/assistant/competition", {"message": "make it 90 minutes and add 2 code tracing questions", "plan": plan["plan"]})
     assert plan2["plan"]["duration_min"] == 90 and len(plan2["questions"]) == 5 and plan2["plan"]["eligible_years"] == [1]
     short = evA.post(f"{A}/assistant/competition", {"message": "30 hard prompt questions"})
@@ -675,6 +675,53 @@ def run():
     assert [q["question_id"] for q in cm["questions"]] == [q["id"] for q in plan2["questions"]]  # the reviewed questions are the ones created
     sup.delete(f"{A}/competitions/{made['id']}")
     ok("competition assistant: plain description -> plan with matching questions, follow-up edits keep earlier details, shortages are reported, draft created exactly as reviewed")
+
+    print("Multiple choice, placement modules, learning path")
+    pr = s3.get(f"{BASE}/api/student/practice")
+    place = [x for x in pr if x["category"].startswith("Placement: ")]
+    assert len(place) == 38 and sum(x["qtype"] == "mcq" for x in place) == 28, len(place)
+    mq = next(x for x in place if x["qtype"] == "mcq")
+    pv = s3.get(f"{BASE}/api/student/practice/{mq['id']}")
+    right = sup.get(f"{A}/questions/{mq['id']}")["references"]["answer"]
+    assert len(pv["options"]) == 4 and right.strip() in [o.strip() for o in pv["options"]] and "answer" not in str({k: v for k, v in pv.items() if k != "options"}).replace("'answer']", "")
+    wrong = next(o for o in pv["options"] if o.strip() != right.strip())
+    for code, verdict in ((wrong, "WA"), (right, "AC")):
+        time.sleep(5.1)
+        r = s3.post(f"{BASE}/api/student/submissions", {"competition_id": None, "question_id": mq["id"], "language": "answer", "code": code, "kind": "submit"})
+        assert wait_sub(s3, r["id"])["verdict"] == verdict
+    ok("three placement modules ship with 38 questions (28 multiple choice); a wrong option is WA, the right one AC; practice allows retries")
+    mbody = {"title": "MCQ: Loop count", "category": "Loops", "difficulty": "Easy", "tags": [], "statement": "How many times does `for(i=0;i<5;i++)` run its body?",
+             "qtype": "mcq", "options": ["4", "5", "6", "Forever"], "answer": "5"}
+    evA.post(f"{A}/questions", {**mbody, "answer": "7"}, expect=400)
+    evA.post(f"{A}/questions", {**mbody, "options": ["5"]}, expect=400)
+    mc = evA.post(f"{A}/questions", mbody)
+    assert mc["version"]["options"] == ["4", "5", "6", "Forever"] and mc["references"] == {"answer": "5"} and mc["version"]["validated_at"]
+    sup.post(f"{A}/questions/{mc['id']}/status", {"status": "approved"})
+    cq = evA.post(f"{A}/competitions", {**base, "title": "MCQ Quiz", "code": "MCQ-QUIZ", "start_at": int(time.time()) + 3600, "max_marks": 100})
+    evA.put(f"{A}/competitions/{cq['id']}/questions", {"questions": [{"question_id": mc["id"], "marks": 100}]})
+    evA.post(f"{A}/competitions/{cq['id']}/action", {"action": "publish"})
+    s3.post(f"{BASE}/api/student/competitions/{cq['id']}/join")
+    evA.post(f"{A}/competitions/{cq['id']}/action", {"action": "start"})
+    ar = s3.get(f"{BASE}/api/student/competitions/{cq['id']}/arena")
+    assert ar["problems"][0]["options"] == ["4", "5", "6", "Forever"] and ar["problems"][0]["languages"] == ["answer"]
+    time.sleep(5.1)
+    r = s3.post(f"{BASE}/api/student/submissions", {"competition_id": cq["id"], "question_id": mc["id"], "language": "answer", "code": "6", "kind": "submit"})
+    assert wait_sub(s3, r["id"])["verdict"] == "WA"
+    time.sleep(5.1)
+    s3.post(f"{BASE}/api/student/submissions", {"competition_id": cq["id"], "question_id": mc["id"], "language": "answer", "code": "5", "kind": "submit"}, expect=409)
+    evA.post(f"{A}/competitions/{cq['id']}/action", {"action": "end"})
+    ok("organiser creates a multiple-choice question (bad answer / too few options refused); in a competition the first answer is final")
+    jr = s3.get(f"{BASE}/api/student/journey")
+    names = [x["category"] for x in jr["stages"]]
+    assert names[:5] == ["C Basics", "C Logic Building", "Placement: Predict the Output", "Placement: CS Fundamentals", "Placement: Coding Patterns"], names
+    assert jr["current"] == 0 and jr["stages"][0]["next_id"] and jr["stages"][2]["solved"] + jr["stages"][3]["solved"] >= 1 and all(x["total"] for x in jr["stages"])
+    ins = s3.get(f"{BASE}/api/student/insights")
+    assert ins["level"] in ("Easy", "Intermediate", "Challenging") and ins["recommendations"]
+    pm = evA.post(f"{A}/assistant/competition", {"message": "placement mock: 6 moderate mcq, 2 easy coding, 40 minutes"})
+    assert [q["qtype"] for q in pm["questions"]].count("mcq") == 6 and pm["missing"] == [], pm["problems"]
+    st2 = sup.get(f"{A}/ai/status")
+    assert st2["enabled"] is False and st2["autogrow"] is True and "Install AI model" in st2["reason"]
+    ok("learning path lists the modules in placement order with the next problem; the assistant builds a mock from multiple-choice + coding; AI absence is explained, never an error")
 
     print("Rate limiting & recovery")
     bad = Client()

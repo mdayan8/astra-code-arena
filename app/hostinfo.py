@@ -73,7 +73,12 @@ def specs():
     total, _ = ram_mb()
     threads, phys = os.cpu_count() or 1, physical_cores()
     du = shutil.disk_usage(config.DATA_DIR)
-    workers = workers_for(total, phys, threads, bool(config.AI_BASE_URL and config.AI_MODEL))
+    try:   # an AI model found in Ollama needs its share of memory too, even when nothing was configured by hand
+        from . import ai
+        ai_on = ai.enabled()
+    except Exception:
+        ai_on = bool(config.AI_BASE_URL and config.AI_MODEL)
+    workers = workers_for(total, phys, threads, ai_on)
     return {"cores": phys, "threads": threads, "ram_mb": total, "disk_free_gb": round(du.free / 1e9, 1), "recommended_workers": workers,
             "max_students": workers * 100, "os": sys.platform}
 

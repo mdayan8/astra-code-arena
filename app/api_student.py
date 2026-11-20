@@ -424,7 +424,7 @@ def problem_payload(c, v, extra=None):
     d = {"title": v["title"], "statement": v["statement"], "input_format": v["input_format"], "output_format": v["output_format"],
          "constraints": v["constraints"], "time_limit_ms": v["time_limit_ms"], "memory_mb": v["memory_mb"],
          "languages": db.jl(v["languages"]), "samples": samples(c, v["id"]),
-         "qtype": v.get("qtype") or "standard", "starter": db.jl(v.get("starter"), {}) or {}}
+         "qtype": v.get("qtype") or "standard", "starter": db.jl(v.get("starter"), {}) or {}, "options": db.jl(v.get("options"))}
     d.update(extra or {})
     return d
 
@@ -495,6 +495,38 @@ def practice_list(u=Depends(student), c=Depends(conn)):
     return rows
 
 
+# The order a student should work in. It follows what campus placement tests ask (TCS NQT, Infosys, Wipro, Accenture, Cognizant,
+# Capgemini): language basics -> logic -> reading code (output / pseudo-code MCQs) -> CS fundamentals -> coding patterns -> timed mocks.
+# Modules an organiser adds later are placed after these automatically.
+JOURNEY = [
+    ("C Basics", "Start here: input, output, conditions and loops. Every later step builds on this."),
+    ("C Logic Building", "Number programs and patterns: the warm-up coding questions of most placement tests."),
+    ("Placement: Predict the Output", "Read code and say what it prints. Pseudo-code and output questions are in almost every company's test."),
+    ("Placement: CS Fundamentals", "Complexity, data structures, OOP, DBMS and OS basics: the technical multiple-choice section."),
+    ("Placement: Coding Patterns", "Arrays and strings problems of the size asked in the coding round. Aim to solve each within 20 minutes."),
+]
+
+
+@router.get("/api/student/journey")
+def journey(u=Depends(student), c=Depends(conn)):
+    rows = practice_list(u, c)
+    cats = {}
+    for r in rows:
+        cats.setdefault(r["category"], []).append(r)
+    why = dict(JOURNEY)
+    names = [k for k, _ in JOURNEY if k in cats] + sorted(k for k in cats if k not in why)
+    rank = {"Easy": 0, "Intermediate": 1, "Challenging": 2}
+    stages = []
+    for k in names:
+        rs = cats[k]
+        todo = sorted((r for r in rs if not r["solved"]), key=lambda r: (rank.get(r["difficulty"], 1), r["id"]))
+        stages.append({"category": k, "why": why.get(k, "Extra practice added by your organisers."), "total": len(rs), "solved": len(rs) - len(todo),
+                       "next_id": todo[0]["id"] if todo else None, "next_title": todo[0]["title"] if todo else None,
+                       "done": len(rs) - len(todo) >= max(1, round(len(rs) * 0.8))})   # 80% is enough to move on
+    cur = next((i for i, s in enumerate(stages) if not s["done"]), None)
+    return {"stages": stages, "current": cur, "mock": "Finish with timed rounds on the Competitions page: one sitting, no going back, like the real test."}
+
+
 def practice_question(c, qid):
     q = db.one(c, "SELECT q.*, qv.id AS vid FROM questions q JOIN question_versions qv ON qv.id=q.latest_version_id WHERE q.id=? AND q.practice=1 AND q.status='approved'", qid)
     if not q or db.one(c, "SELECT 1 AS x FROM competition_questions cq JOIN competitions co ON co.id=cq.competition_id WHERE cq.question_id=? AND co.status IN ('draft','published','live','paused')", qid):
@@ -550,6 +582,10 @@ def submit(body: SubmitIn, req: Request, u=Depends(student), c=Depends(conn)):
         allowed = [l for l in db.jl(v["languages"]) if l in ("answer", "prompt")] or [l for l in db.jl(v["languages"]) if l in db.jl(comp["languages"])] or db.jl(comp["languages"])
         if body.language not in allowed:
             raise HTTPException(400, "That language is not allowed in this competition.")
+        if body.kind == "submit" and db.jl(v.get("options")) and db.one(
+                c, "SELECT 1 AS x FROM submissions WHERE competition_id=? AND user_id=? AND question_id=? AND kind='submit' AND COALESCE(verdict,'')!='IE'",
+                comp["id"], u["id"], body.question_id):   # four options: a second try would be a free guess
+            raise HTTPException(409, "You have already answered this multiple-choice question. In a competition the first answer is final.")
         kind, comp_id, vid = body.kind, comp["id"], v["id"]
     if kind != "run":
         cool = int(db.setting(c, "submit_cooldown_sec", "5") or 5)
@@ -709,7 +745,11 @@ BADGES = [  # (key, name, description, icon)
     ("champion", "Champion", "Win a completed round", "crown"),
     ("perfect", "Perfect Round", "Score full marks in a round", "target"),
     ("polyglot", "Polyglot", "Get Accepted in 3 different languages", "globe"),
+    ("solver100", "Centurion", "Solve 100 different problems", "crown"),
+    ("streak3", "Warming Up", "Code on 3 days in a row", "flame"),
     ("streak7", "On Fire", "Code on 7 days in a row", "flame"),
+    ("streak30", "Unstoppable", "Code on 30 days in a row", "flame"),
+    ("thinker", "Sharp Reader", "Answer 10 multiple-choice or output questions correctly", "target"),
     ("speed", "Speedster", "Solve a contest problem within 10 minutes of the start", "bolt"),
 ]
 
@@ -769,11 +809,19 @@ def student_stats(c, uid):
         speed |= any(s["competition_id"] == comp["id"] and s["verdict"] == "AC" and s["created_at"] - st <= 600 for s in subs)
     n = len(solved)
     earned = {"first_ac": n >= 1, "solver10": n >= 10, "solver25": n >= 25, "solver50": n >= 50, "debut": rounds >= 1, "veteran": rounds >= 5,
-              "podium": podium, "champion": champion, "perfect": perfect, "polyglot": len(ac_langs) >= 3, "streak7": longest >= 7, "speed": speed}
+              "podium": podium, "champion": champion, "perfect": perfect, "polyglot": len(ac_langs - {"answer", "prompt"}) >= 3, "streak7": longest >= 7, "speed": speed,
+              "solver100": n >= 100, "streak3": longest >= 3, "streak30": longest >= 30,
+              "thinker": len({s["question_id"] for s in subs if s["verdict"] == "AC" and s["language"] == "answer"}) >= 10}
+    # one badge per practice module, created by itself for every module that exists (also ones added later)
+    mods = {}
+    for r in db.all_(c, "SELECT id, category FROM questions WHERE practice=1 AND status='approved'"):
+        mods.setdefault(r["category"], []).append(r["id"])
+    module_badges = [{"key": "module:" + k, "name": k.replace("Placement: ", "") + " Master", "description": f"Solve every problem in {k}", "icon": "award",
+                      "earned": all(i in solved for i in ids)} for k, ids in sorted(mods.items()) if len(ids) >= 5]
     return {"heatmap": heat, "streak": cur, "longest_streak": longest, "solved": n, "solved_by_difficulty": by_diff,
             "totals_by_difficulty": {k: totals.get(k, 0) for k in ("Easy", "Intermediate", "Challenging")},
             "languages": sorted(ac_langs), "submissions": len(subs), "accepted": sum(1 for s in subs if s["verdict"] == "AC"), "rounds": rounds,
-            "badges": [{"key": k, "name": nm, "description": d, "icon": ic, "earned": earned[k]} for k, nm, d, ic in BADGES]}
+            "badges": [{"key": k, "name": nm, "description": d, "icon": ic, "earned": earned[k]} for k, nm, d, ic in BADGES] + module_badges}
 
 
 @router.get("/api/student/stats")

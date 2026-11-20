@@ -48,7 +48,7 @@ LANGS = {
 # predict-the-output / code-tracing questions: the student types the answer; it is compared with the expected text (nothing runs)
 LANGS["answer"] = {"name": "Written answer", "file": "answer.txt", "compile": None, "run": None, "time_factor": 1.0, "as_limit": False, "monaco": "plaintext", "text": True}
 CODE_LANGS = [k for k, v in LANGS.items() if not v.get("ai") and not v.get("text")]
-ANSWER_QTYPES = ("output", "trace")
+ANSWER_QTYPES = ("output", "trace", "mcq")
 
 TEMPLATES = {
     "c": '#include <stdio.h>\n\nint main(void) {\n    // read input from stdin, print answer to stdout\n    int n;\n    if (scanf("%d", &n) != 1) return 0;\n    printf("%d\\n", n);\n    return 0;\n}\n',

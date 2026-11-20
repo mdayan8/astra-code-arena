@@ -10,3 +10,4 @@ ai-models.tgz
 *.db-wal
 *.db-shm
 .DS_Store
+.claude/

@@ -3,6 +3,7 @@ Keys live only in server env. Everything the model returns becomes a *draft*; ex
 recomputed by running the reference solution in the sandbox, never trusted from the model."""
 import json
 import re
+import time
 import urllib.error
 import urllib.request
 
@@ -20,20 +21,60 @@ QUESTION_SCHEMA = """{
 }"""
 
 
-def enabled():
-    return bool(config.AI_BASE_URL and config.AI_MODEL)
+OLLAMA = "http://127.0.0.1:11434/v1"   # used when nothing is configured: any model installed in Ollama just works
+_state = {"at": 0.0, "v": None}
 
 
-def status():
-    if not enabled():
-        return {"enabled": False, "reason": "AI is not configured (set AI_BASE_URL and AI_MODEL in .env). Manual authoring works without it."}
+def base():
+    return (config.AI_BASE_URL or OLLAMA).rstrip("/")
+
+
+def choose(models, want):
+    """The organiser's choice if it is installed, else the closest installed model. Never a model that is not there."""
+    models = [m for m in models if "embed" not in m.lower()]
+    if not models:
+        return want   # endpoints that do not list models (some hosted providers): trust the configured name
+    if want in models:
+        return want
+    near = [m for m in models if want and m.split(":")[0] == want.split(":")[0]]
+    coder = [m for m in models if "coder" in m.lower() or "code" in m.lower()]
+    return (near or coder or models)[0]
+
+
+def status(fresh=True):
+    """Looks at what is really installed, at most every 20 s, so swapping or adding an Ollama model needs no restart."""
+    if not fresh and _state["v"] and time.time() - _state["at"] < 20:
+        return _state["v"]
+    want = ""
     try:
-        req = urllib.request.Request(config.AI_BASE_URL.rstrip("/") + "/models", headers=_headers())
-        with urllib.request.urlopen(req, timeout=5) as r:
-            r.read()
-        return {"enabled": True, "model": config.AI_MODEL, "reachable": True}
+        c = db.connect()
+        try:
+            want = db.setting(c, "ai_model", "")
+        finally:
+            c.close()
+    except Exception:
+        pass
+    want = want or config.AI_MODEL
+    try:
+        req = urllib.request.Request(base() + "/models", headers=_headers())
+        with urllib.request.urlopen(req, timeout=3) as r:
+            models = sorted(str(m.get("id")) for m in (json.loads(r.read()).get("data") or []) if isinstance(m, dict) and m.get("id"))
+        model = choose(models, want)
+        v = ({"enabled": True, "reachable": True, "model": model, "models": [m for m in models if "embed" not in m.lower()][:60], "auto": model != want}
+             if model else {"enabled": False, "models": [], "reason": "The AI service is running but no model is installed yet. Install one from the ASTRA Code Arena app (Install AI model)."})
     except Exception as e:
-        return {"enabled": True, "model": config.AI_MODEL, "reachable": False, "reason": f"AI endpoint not reachable: {e}"}
+        v = ({"enabled": True, "reachable": False, "model": want, "models": [], "reason": f"AI endpoint not reachable: {e}"} if config.AI_BASE_URL else
+             {"enabled": False, "models": [], "reason": "No AI model is installed on this computer. Everything else works without it. To add one, open the ASTRA Code Arena app and press Install AI model."})
+    _state.update(at=time.time(), v=v)
+    return v
+
+
+def enabled():
+    return bool(status(False)["enabled"])
+
+
+def model():
+    return status(False).get("model") or config.AI_MODEL
 
 
 def _headers():
@@ -57,9 +98,9 @@ def chat_text(system: str, user: str, max_tokens: int = 700, temperature: float 
     if not _SLOTS.acquire(timeout=45):
         raise AIBusy("The AI assistant is busy. Try again in a minute.")
     try:
-        body = {"model": config.AI_MODEL, "temperature": temperature, "max_tokens": max_tokens,
-                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user + ("\n/no_think" if "qwen3" in config.AI_MODEL else "")}]}
-        req = urllib.request.Request(config.AI_BASE_URL.rstrip("/") + "/chat/completions", data=json.dumps(body).encode(), headers=_headers())
+        body = {"model": model(), "temperature": temperature, "max_tokens": max_tokens,
+                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user + ("\n/no_think" if "qwen3" in model() else "")}]}
+        req = urllib.request.Request(base() + "/chat/completions", data=json.dumps(body).encode(), headers=_headers())
         with urllib.request.urlopen(req, timeout=min(config.AI_TIMEOUT, 120)) as r:
             data = json.loads(r.read())
         return re.sub(r"<think>.*?</think>", "", data["choices"][0]["message"]["content"] or "", flags=re.S).strip()
@@ -77,9 +118,9 @@ def chat(prompt: str) -> dict:
 
 
 def _chat(prompt: str) -> dict:
-    body = {"model": config.AI_MODEL, "temperature": 0.4, "response_format": {"type": "json_object"},
-            "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt + ("\n/no_think" if "qwen3" in config.AI_MODEL else "")}]}
-    req = urllib.request.Request(config.AI_BASE_URL.rstrip("/") + "/chat/completions", data=json.dumps(body).encode(), headers=_headers())
+    body = {"model": model(), "temperature": 0.4, "response_format": {"type": "json_object"},
+            "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt + ("\n/no_think" if "qwen3" in model() else "")}]}
+    req = urllib.request.Request(base() + "/chat/completions", data=json.dumps(body).encode(), headers=_headers())
     try:
         with urllib.request.urlopen(req, timeout=config.AI_TIMEOUT) as r:
             data = json.loads(r.read())
@@ -186,6 +227,107 @@ Rules for reference solutions (they are executed automatically and must agree wi
 Return JSON exactly in this shape:
 {QUESTION_SCHEMA}"""
     return chat(prompt)
+
+
+def generate_mcq(p: dict) -> list:
+    """Multiple-choice questions. `style` output = each shows a short C program and asks what it prints (the answer is then
+    checked by really running the program); concept = short theory questions (a person must confirm the answer)."""
+    n = max(1, min(int(p.get("count") or 5), 10))
+    output = p.get("style") == "output"
+    prompt = f"""Write {n} multiple-choice questions for engineering students preparing for campus placement tests.
+Topic: {p.get('topic')}
+Difficulty: {p.get('difficulty') or 'Easy'} (simple to read, but the student must think logically)
+{'Each question shows one short, complete C program (with #include <stdio.h> and main, no input, no undefined behaviour) in "code" and asks what it prints.' if output else 'Each is a short concept or logic question; leave "code" empty unless a tiny snippet is needed.'}
+Rules: exactly 4 short options, exactly one correct, all different, no "all of the above" or "none of the above". "answer" is the position (0-3) of the correct option.
+Return JSON: {{"questions": [{{"title": str, "question": str, "code": str, "options": [str, str, str, str], "answer": int, "explanation": str}}]}}"""
+    out = []
+    for q in (chat(prompt).get("questions") or []):
+        if not isinstance(q, dict):
+            continue
+        opts = list(dict.fromkeys(str(o).strip()[:300] for o in (q.get("options") or []) if str(o).strip()))
+        try:
+            ans = int(q.get("answer"))
+        except (TypeError, ValueError):
+            continue
+        if len(opts) != 4 or not 0 <= ans < 4 or not str(q.get("question") or "").strip():
+            continue   # malformed: drop it instead of guessing
+        code = fix_code("c", str(q.get("code") or "")) if str(q.get("code") or "").strip() else ""
+        out.append({"title": str(q.get("title") or q["question"])[:120], "question": str(q["question"]).strip(), "code": code, "options": opts,
+                    "answer": opts[ans], "explanation": str(q.get("explanation") or "")[:1500]})
+    return out[:n]
+
+
+def _run_c(c, qid, vid, user_id, code, timeout=90):
+    """Runs a C program in the judge sandbox (through the normal queue) and returns what it printed, or None."""
+    sid = c.execute("INSERT INTO submissions(competition_id,user_id,question_id,version_id,kind,language,code,custom_input,created_at) VALUES(NULL,?,?,?,'run','c',?,' ',?)",
+                    (user_id, qid, vid, code, db.now())).lastrowid
+    t = time.time()
+    while time.time() - t < timeout:
+        r = db.one(c, "SELECT status, verdict FROM submissions WHERE id=?", sid)
+        if r and r["status"] == "done":
+            o = db.one(c, "SELECT output FROM judging_results WHERE submission_id=? ORDER BY ordinal LIMIT 1", sid)
+            return o["output"] if o and r["verdict"] == "OK" else None
+        time.sleep(1)
+    return None
+
+
+def run_mcq(draft_id: int, params: dict, user_id: int):
+    """Background: generate, save each as an unapproved question, and for output questions replace the model's claimed answer by the real one."""
+    from .api_admin import QuestionIn, create_question, set_answer
+    c = db.connect()
+    first = None
+    try:
+        qs = []
+        for attempt in range(3):
+            try:
+                qs = generate_mcq(params)
+            except RuntimeError:
+                continue
+            if qs:
+                break
+        if not qs:
+            raise RuntimeError("The model did not return usable multiple-choice questions. Try again, a simpler topic, or a larger model.")
+        for n, q in enumerate(qs):
+            log = []
+            st = q["question"] + (f"\n\n```c\n{q['code'].strip()}\n```" if q["code"] else "")
+            with db.tx(c):
+                qid = create_question(c, QuestionIn(title=q["title"][:150], category=str(params.get("topic") or "Problem Solving")[:60], difficulty=params.get("difficulty") or "Easy",
+                                                    tags=["mcq", "ai"], statement=st, qtype="mcq", options=q["options"], answer=q["answer"], practice=True), {"id": user_id}, "ai")
+            vid = db.one(c, "SELECT latest_version_id AS v FROM questions WHERE id=?", qid)["v"]
+            if q["code"] and params.get("style") == "output":
+                real = _run_c(c, qid, vid, user_id, q["code"])
+                c.execute("DELETE FROM submissions WHERE question_id=? AND kind='run' AND user_id=?", (qid, user_id))
+                norm = lambda x: "\n".join(l.rstrip() for l in str(x).strip().splitlines())
+                if real is None or not real.strip():
+                    log.append("The program could not be run in the sandbox, so the marked answer is the model's guess. Check it before approving.")
+                elif norm(real) == norm(q["answer"]):
+                    log.append("Sandbox check passed: the program really prints the marked answer.")
+                else:
+                    match = next((o for o in q["options"] if norm(o) == norm(real)), None)
+                    opts = q["options"] if match else [real.strip() if o == q["answer"] else o for o in q["options"]]
+                    with db.tx(c):
+                        c.execute("UPDATE question_versions SET options=? WHERE id=?", (json.dumps(opts), vid))
+                        set_answer(c, vid, match or real.strip())
+                    log.append("The model marked a wrong answer. Corrected to what the program really prints in the sandbox.")
+            else:
+                log.append("Concept question: read it and confirm the marked answer before approving.")
+            if q["explanation"]:
+                log.append("Model's explanation: " + q["explanation"])
+            pay = json.dumps({"title": q["title"], "qtype": "mcq", "harness": "done"})
+            if n == 0:   # the first row stays "writing" until the whole set is done, so the page keeps refreshing
+                first = (qid, pay, json.dumps(log), draft_id)
+            else:
+                c.execute("INSERT INTO generated_question_drafts(source,status,payload,warnings,question_id,created_by,created_at) VALUES('ai','pending',?,?,?,?,?)",
+                          (pay, json.dumps(log), qid, user_id, db.now()))
+        c.execute("UPDATE generated_question_drafts SET status='pending', question_id=?, payload=?, warnings=? WHERE id=?", first)
+    except Exception as e:
+        if first:   # some questions were already saved: keep them reviewable
+            c.execute("UPDATE generated_question_drafts SET status='pending', question_id=?, payload=?, warnings=? WHERE id=?", first)
+        else:
+            c.execute("UPDATE generated_question_drafts SET status='failed', warnings=? WHERE id=?", (json.dumps([f"AI generation failed: {e}"]), draft_id))
+        db.log_error(c, "ai", e)
+    finally:
+        c.close()
 
 
 def suggest_tests(q: dict, kinds: list, count: int) -> list:
@@ -416,7 +558,16 @@ def run_draft(draft_id: int, kind: str, params: dict, user_id: int = None):
                     c.execute("INSERT INTO reference_solutions(version_id,language,code) VALUES(?,?,?) ON CONFLICT(version_id,language) DO UPDATE SET code=excluded.code", (vid2, lang, code))
                 c.execute("UPDATE test_cases SET expected='', validated=0 WHERE version_id=?", (vid2,))  # recompute from the fixed reference
                 invalidate(c, vid2)
-        c.execute("UPDATE generated_question_drafts SET status='pending', payload=?, warnings=? WHERE id=?", (json.dumps({**q, "harness": "done"}), json.dumps(log), draft_id))
+        st = "pending"
+        if params.get("auto_publish"):   # practice auto-grow: published only when both reference solutions agree on every test
+            ok = any(l.startswith("Sandbox check passed") for l in log) and db.one(c, "SELECT validated_at AS v FROM question_versions qv JOIN questions q ON q.latest_version_id=qv.id WHERE q.id=?", qid)["v"]
+            if ok:
+                c.execute("UPDATE questions SET status='approved', practice=1, tags=? WHERE id=?", (json.dumps((q["tags"] + ["auto"])[:12]), qid))
+                st = "approved"
+                log.append("Published to Practice automatically.")
+            else:
+                log.append("Not published: it did not pass the sandbox check. Review it by hand or reject it.")
+        c.execute("UPDATE generated_question_drafts SET status=?, payload=?, warnings=? WHERE id=?", (st, json.dumps({**q, "harness": "done"}), json.dumps(log), draft_id))
     except Exception as e:
         c.execute("UPDATE generated_question_drafts SET status='failed', warnings=? WHERE id=?", (json.dumps(log + [f"AI generation failed: {e}"]), draft_id))
         db.log_error(c, "ai", e)

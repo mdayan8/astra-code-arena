@@ -338,10 +338,36 @@ TIPS = {"WA": "Wrong answers usually hide in edge cases: n = 1, all equal values
         "MLE": "Memory limit: avoid storing everything at once; process input as you read it."}
 
 
+def autogrow(c, uid, level, weak, left):
+    """A student has almost run out of practice at their level: ask the AI for one new problem. It is published only if both
+    reference solutions agree in the sandbox. At most one at a time and 4 a day, so a small PC is never kept busy."""
+    try:
+        if left >= 3 or db.setting(c, "practice_autogrow", "true") != "true" or not ai.enabled():
+            return
+        t = db.now()
+        if db.one(c, "SELECT 1 AS x FROM generated_question_drafts WHERE source='ai' AND (status='generating' OR (created_at>? AND payload LIKE '%\"auto_publish\"%')) LIMIT 1", t - 900):
+            return
+        if db.one(c, "SELECT COUNT(*) AS n FROM generated_question_drafts WHERE source='ai' AND created_at>? AND payload LIKE '%\"auto_publish\"%'", t - 86400)["n"] >= 4:
+            return
+        if db.one(c, "SELECT 1 AS x FROM competitions WHERE status IN ('live','paused') LIMIT 1"):
+            return   # never compete with a running round for the judge
+        cats = [r["category"] for r in db.all_(c, "SELECT DISTINCT category FROM questions WHERE practice=1 AND status='approved'")]
+        topic = (weak or cats or ["Problem Solving"])[t // 86400 % max(1, len(weak or cats or [1]))]
+        adm = db.one(c, "SELECT id FROM users WHERE role='super_admin' ORDER BY id LIMIT 1")
+        if not adm:
+            return
+        uid = adm["id"]   # the new question belongs to the organiser, not to the student who triggered it
+        p = {"topic": topic, "difficulty": level, "language": "C and Python", "samples": 2, "auto_publish": True}
+        gid = c.execute("INSERT INTO generated_question_drafts(source,status,payload,created_by,created_at) VALUES('ai','generating',?,?,?)", (json.dumps({"request": p}), None, t)).lastrowid
+        threading.Thread(target=ai.run_draft, args=(gid, "generate", p, uid), daemon=True).start()
+    except Exception as e:   # a helper feature must never break the student's page
+        db.log_error(c, "autogrow", e)
+
+
 @router.get("/api/student/insights")
 def insights(u=Depends(student), c=Depends(conn)):
     subs = db.all_(c, "SELECT s.question_id, s.verdict, q.category, q.difficulty FROM submissions s JOIN questions q ON q.id=s.question_id "
-                      "WHERE s.user_id=? AND s.kind IN ('submit','practice') AND s.status='done'", u["id"])
+                      "WHERE s.user_id=? AND s.kind IN ('submit','practice') AND s.status='done' ORDER BY s.id", u["id"])
     cats = {}
     for s in subs:
         k = cats.setdefault(s["category"], {"category": s["category"], "attempts": 0, "accepted": 0, "tried": set(), "solved": set()})
@@ -358,15 +384,21 @@ def insights(u=Depends(student), c=Depends(conn)):
             verdicts[s["verdict"]] = verdicts.get(s["verdict"], 0) + 1
     solved = {s["question_id"] for s in subs if s["verdict"] == "AC"}
     easy_done = sum(1 for s in subs if s["verdict"] == "AC" and s["difficulty"] == "Easy")
-    level = "Easy" if len(solved) < 5 else ("Intermediate" if len(solved) < 15 or easy_done < 5 else "Challenging")
+    order = {"Easy": 0, "Intermediate": 1, "Challenging": 2}
+    lv = 0 if len(solved) < 5 else (1 if len(solved) < 15 or easy_done < 5 else 2)
+    recent = list(dict.fromkeys(s["question_id"] for s in reversed(subs)))[:8]   # adapts to how the last few problems went
+    if len(recent) >= 5:
+        rate = sum(1 for q in recent if q in solved) / len(recent)
+        lv = min(2, lv + 1) if rate >= 0.85 else max(0, lv - 1) if rate <= 0.35 else lv
+    level = ["Easy", "Intermediate", "Challenging"][lv]
     weak = [t["category"] for t in sorted(topics, key=lambda x: x["mastery"]) if t["mastery"] < 70][:2]
     pool = db.all_(c, "SELECT q.id, q.category, q.difficulty, qv.title FROM questions q JOIN question_versions qv ON qv.id=q.latest_version_id "
                       "WHERE q.practice=1 AND q.status='approved' AND NOT EXISTS (SELECT 1 FROM competition_questions cq JOIN competitions co ON co.id=cq.competition_id "
                       "WHERE cq.question_id=q.id AND co.status IN ('draft','published','live','paused'))")
     pool = [q for q in pool if q["id"] not in solved]
-    order = {"Easy": 0, "Intermediate": 1, "Challenging": 2}
     pool.sort(key=lambda q: (0 if q["category"] in weak else 1, abs(order[q["difficulty"]] - order[level]), q["title"]))
     recs = [{**q, "reason": f"Strengthens {q['category']}" if q["category"] in weak else f"Matches your level ({level})"} for q in pool[:4]]
+    autogrow(c, u["id"], level, weak, sum(1 for q in pool if q["difficulty"] == level))
     top = max(verdicts, key=verdicts.get) if verdicts else None
     return {"level": level, "topics": topics, "verdicts": verdicts, "weak": weak, "strong": [t["category"] for t in topics if t["mastery"] >= 80][:2],
             "recommendations": recs, "tip": TIPS.get(top) if top else "Start with an Easy practice problem: read the sample, run it, then submit.",

@@ -327,14 +327,24 @@ async function semesterPage(p) {
 // ---------------- practice / profile / rules ----------------
 async function practicePage() {
   shell('practice');
-  const rows = await GET('/api/student/practice');
+  const [rows, jr] = await Promise.all([GET('/api/student/practice'), GET('/api/student/journey').catch(() => ({ stages: [], current: null }))]);
   const solved = rows.filter((r) => r.solved).length;
+  const stage = jr.current == null ? null : jr.stages[jr.current];
+  const pathHTML = !jr.stages.length ? '' : `<section class="card pad path"><div class="row between wrap"><div><div class="small muted">Your learning path · built around what placement tests ask</div>
+      <h3 style="margin:2px 0 0">${stage ? `Step ${jr.current + 1} of ${jr.stages.length}: ${esc(stage.category)}` : 'All steps complete. Now take timed rounds.'}</h3></div>
+      ${stage?.next_id ? `<a class="btn primary" href="#/practice/${stage.next_id}">${ico('right', 14)} Continue: ${esc(stage.next_title)}</a>` : '<a class="btn primary" href="#/competitions">Go to competitions</a>'}</div>
+    <p class="small muted" style="margin:8px 0 12px">${esc(stage ? stage.why : jr.mock)}</p>
+    <ol class="steps">${jr.stages.map((s, i) => `<li class="${s.done ? 'done' : i === jr.current ? 'now' : ''}" data-step="${esc(s.category)}" title="${esc(s.why)}"><span class="n">${s.done ? ico('check', 13) : i + 1}</span><span class="t">${esc(s.category.replace('Placement: ', ''))}</span><span class="tiny muted">${s.solved}/${s.total}</span></li>`).join('')}
+      <li class="${stage ? '' : 'now'}" title="${esc(jr.mock)}"><span class="n">${ico('trophy', 13)}</span><span class="t">Timed mock rounds</span><span class="tiny muted">Competitions</span></li></ol></section>`;
   app.innerHTML = `<div class="container page"><div class="row between wrap" style="margin-bottom:16px"><div><h1 style="margin:0">Practice</h1><div class="muted">Work through each module in order, at your own pace. ${solved} of ${rows.length} solved so far.</div></div>
     <div class="row"><input class="input" id="q" placeholder="Search problems" style="width:220px"><select class="select" id="d" style="width:auto"><option value="">All levels</option><option>Easy</option><option>Intermediate</option><option>Challenging</option></select></div></div>
-    <div class="modgrid" id="mods"></div>
+    ${pathHTML}<div class="modgrid" id="mods"></div>
     <div id="pl"></div></div>${footer()}`;
-  const TYPE = { debug: ['Fix the bug', 'amber'], complete: ['Complete the code', 'blue'], output: ['Predict the output', 'violet'], trace: ['Code tracing', 'violet'], prompt: ['Prompt', 'violet'] };
-  const cats = [...new Set(rows.map((r) => r.category))];
+  const TYPE = { debug: ['Fix the bug', 'amber'], complete: ['Complete the code', 'blue'], output: ['Predict the output', 'violet'], trace: ['Code tracing', 'violet'], prompt: ['Prompt', 'violet'], mcq: ['Multiple choice', 'blue'] };
+  const order = jr.stages.map((s) => s.category);
+  const cats = [...new Set(rows.map((r) => r.category))].sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99));
+  rows.sort((a, b) => cats.indexOf(a.category) - cats.indexOf(b.category));
+  $$('[data-step]').forEach((li) => li.onclick = () => { mod = li.dataset.step; draw(); $('#pl').scrollIntoView({ behavior: 'smooth' }); });
   let mod = '';
   const draw = () => {
     const q = $('#q').value.toLowerCase(), d = $('#d').value;
@@ -720,21 +730,25 @@ async function workspace({ mode, compId, qid, q: startQ }) {
       <h2 style="font-size:21px">${esc(p.title)}</h2>
       ${p.qtype === 'debug' ? `<div class="notice warn small" style="margin-bottom:12px">${ico('alert', 14)} <b>Fix the bug.</b> The editor starts with a program that has a mistake. Find it and fix it.</div>`
         : p.qtype === 'complete' ? `<div class="notice info small" style="margin-bottom:12px">${ico('pencil', 14)} <b>Complete the code.</b> Fill in the missing part marked in the starter code.</div>`
+        : p.options?.length ? `<div class="notice info small" style="margin-bottom:12px">${ico('check', 14)} <b>Multiple choice.</b> Work it out, pick one option below, then press Submit.${contest ? ' In a competition your first answer is final.' : ''}</div>`
         : p.qtype === 'output' || p.qtype === 'trace' ? `<div class="notice info small" style="margin-bottom:12px">${ico('eye', 14)} <b>${p.qtype === 'output' ? 'Predict the output.' : 'Trace the code.'}</b> Do not run anything: read the code, work it out, and type your answer in the box on the right exactly as it would appear. Then press Submit.</div>`
         : p.qtype === 'prompt' ? `<div class="notice info small" style="margin-bottom:12px">${ico('sparkles', 14)} <b>Prompt challenge.</b> Write instructions for the AI, not code. Each test input is sent to the AI with your prompt, and its reply must exactly match the expected output. Use Run to try it on your own input.</div>` : ''}
       <div class="row wrap small muted" style="gap:14px;margin-bottom:14px">${p.marks ? `<span>${ico('medal')} ${p.marks} marks</span>` : ''}${p.difficulty ? `<span>${esc(p.difficulty)}</span>` : ''}<span>${ico('clock')} ${p.time_limit_ms / 1000}s</span><span>${ico('cpu')} ${p.memory_mb} MB</span></div>
       <div class="prose">${md(p.statement)}${p.input_format ? `<h4>Input format</h4>${md(p.input_format)}` : ''}${p.output_format ? `<h4>Output format</h4>${md(p.output_format)}` : ''}${p.constraints ? `<h4>Constraints</h4>${md(p.constraints)}` : ''}</div>
+      ${p.options?.length ? `<div class="mcq">${p.options.map((o, i) => `<button type="button" class="opt" data-opt="${i}"><span class="k">${'ABCDEF'[i]}</span><pre>${esc(o)}</pre></button>`).join('')}</div>` : ''}
       ${p.samples.length ? `<h4 class="exh">${ico('layers', 14)} Examples</h4>` : ''}${p.samples.map((s, i) => `<div class="sample"><div class="small" style="font-weight:650;margin-bottom:8px">Example ${i + 1}</div><div class="io"><div><div class="lbl">Input <button class="btn xs ghost" data-cp="${i}">Copy</button></div><pre>${esc(s.input)}</pre></div><div><div class="lbl">Output</div><pre>${esc(s.output)}</pre></div></div>
         ${s.explanation ? `<div class="prose small" style="margin-top:8px"><b>Explanation:</b> ${md(s.explanation)}</div>` : ''}</div>`).join('')}`;
+    $$('[data-opt]').forEach((b) => b.onclick = () => { editor.setValue(cur.options[b.dataset.opt]); markOpt(); });
     $$('[data-cp]').forEach((b) => b.onclick = () => { const t = cur.samples[b.dataset.cp].input; internalClip = t; navigator.clipboard?.writeText(t); toast('Sample input copied', 'ok'); });
   };
   const drawLang = () => {
     $('#lang').innerHTML = cur.languages.map((l) => `<option value="${l}" ${l === lang ? 'selected' : ''}>${esc(S.info.languages[l]?.name || l)}</option>`).join('');
     editor.setModel(getModel(cur, lang));
   };
+  const markOpt = () => $$('[data-opt]').forEach((b) => b.classList.toggle('on', cur.options[b.dataset.opt].trim() === editor.getValue().trim()));
   const select = (p) => {
     cur = p; lang = langOf(p);
-    drawTabs(); drawProblem(); drawLang();
+    drawTabs(); drawProblem(); drawLang(); markOpt();
     if (!p.samples.length) { showTab('custom'); toast('This problem has no examples: try your own input in the Custom input tab.', 'info'); }
     else { showTab('res'); $('#out').innerHTML = `<div class="muted small">Run your code on the examples, then Submit to be judged on hidden tests.</div>`; }
     track('problem_open', null, p.id);

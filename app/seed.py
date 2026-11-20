@@ -6,13 +6,17 @@ from pathlib import Path
 
 from . import db
 
-SEED = Path(__file__).with_name("seed_c.json")
-
-
 def load(c):
-    if not SEED.exists():
-        return 0
-    data = json.loads(SEED.read_text())
+    n = 0
+    for f in sorted(Path(__file__).parent.glob("seed_*.json")):   # each file is loaded once (its own key), so new modules reach old installs
+        try:
+            n += _load(c, json.loads(f.read_text()))
+        except Exception as e:  # a broken seed file must never stop the server from starting
+            db.log_error(c, "seed", f"{f.name}: {e}")
+    return n
+
+
+def _load(c, data):
     flag = f"seed:{data['key']}"
     with db.tx(c):  # one transaction: the web server and a second process can never both seed
         if db.setting(c, flag, ""):
@@ -26,10 +30,10 @@ def load(c):
                 qid = c.execute("INSERT INTO questions(slug,category,difficulty,tags,status,source,practice,created_at,updated_at) VALUES(?,?,?,?,'approved','seed',1,?,?)",
                                 (slug, m["category"], q["difficulty"], json.dumps(q["tags"]), t, t)).lastrowid
                 val = {l: {"verdict": "AC", "passed": len(q["tests"]), "total": len(q["tests"]), "at": t, "compile_output": "", "failed": []} for l in q["references"]}
-                vid = c.execute("INSERT INTO question_versions(question_id,version_no,title,statement,input_format,output_format,languages,validated_at,validation,qtype,starter,created_at) "
-                                "VALUES(?,1,?,?,?,?,?,?,?,?,?,?)",
+                vid = c.execute("INSERT INTO question_versions(question_id,version_no,title,statement,input_format,output_format,languages,validated_at,validation,qtype,starter,options,created_at) "
+                                "VALUES(?,1,?,?,?,?,?,?,?,?,?,?,?)",
                                 (qid, q["title"], q["statement"], q["input_format"], q["output_format"], json.dumps(q["languages"]), t, json.dumps(val),
-                                 q["qtype"], json.dumps(q["starter"]), t)).lastrowid
+                                 q["qtype"], json.dumps(q["starter"]), json.dumps(q.get("options") or []), t)).lastrowid
                 c.execute("UPDATE questions SET latest_version_id=? WHERE id=?", (vid, qid))
                 for lang, code in q["references"].items():
                     c.execute("INSERT INTO reference_solutions(version_id,language,code) VALUES(?,?,?)", (vid, lang, code))

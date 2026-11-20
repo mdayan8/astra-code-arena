@@ -248,7 +248,7 @@ def get_settings(u=Depends(admin), c=Depends(conn)):
     s["schedule"] = db.jl(db.setting(c, "schedule", ""), {}) or {"enabled": False, "windows": [], "message": ""}
     return {"settings": s, "env": {"APP_ENV": config.APP_ENV, "APP_PORT": config.APP_PORT, "APP_TIMEZONE": config.APP_TIMEZONE,
                                    "COOKIE_SECURE": config.COOKIE_SECURE, "JUDGE_WORKERS": config.JUDGE_WORKERS,
-                                   "AI": f"{config.AI_MODEL} @ {config.AI_BASE_URL}" if ai.enabled() else "not configured"}}
+                                   "AI": f"{ai.model()} @ {ai.base()}" if ai.enabled() else "not installed (optional)"}}
 
 
 @router.put("/settings")
@@ -390,6 +390,7 @@ class AssistIn(BaseModel):
     message: str = Field(default="", max_length=2000)
     plan: dict = {}
     create: bool = False
+    fill: bool = False
 
 
 @router.post("/assistant/competition")
@@ -399,12 +400,35 @@ def assistant_competition(body: AssistIn, req: Request, u=Depends(admin), c=Depe
     from . import assistant
     plan = assistant.parse(body.message, body.plan, departments(c)) if body.message.strip() else dict(body.plan)
     random_state = plan.pop("picked", None)  # keep the same questions between turns unless the request changed
-    chosen, short = assistant.pick(c, plan)
+    chosen, short, missing = assistant.pick(c, plan)
     if random_state and not body.message.strip():
         keep = {q["id"]: q for q in db.all_(c, "SELECT q.id, q.category, q.difficulty, qv.title, qv.qtype FROM questions q JOIN question_versions qv ON qv.id=q.latest_version_id "
                                                f"WHERE q.status='approved' AND q.id IN ({','.join('?' * len(random_state))})", *random_state)}
         chosen = [keep[i] for i in random_state if i in keep] or chosen
     out = assistant.describe(plan, chosen, short)
+    out["missing"] = missing if ai.enabled() and "ai" in u.get("modules", ["ai"]) else []
+    if body.fill and out["missing"]:   # "Write the missing ones with AI": drafts appear in AI Studio for approval
+        started, skipped = 0, []
+        for m in out["missing"]:
+            p = {"topic": m["topic"] or {"mcq": "C programming and data structures", "output": "C output prediction"}.get(m["type"], "arrays, strings and loops"),
+                 "difficulty": m["difficulty"] or "Easy"}
+            if m["type"] in ("mcq", "output"):
+                p.update(style="output" if m["type"] == "output" else "concept", count=min(m["count"], 10))
+                gid = c.execute("INSERT INTO generated_question_drafts(source,status,payload,created_by,created_at) VALUES('ai','generating',?,?,?)",
+                                (json.dumps({"request": p, "title": f"{p['count']} multiple-choice: {p['topic']}"}), u["id"], db.now())).lastrowid
+                threading.Thread(target=ai.run_mcq, args=(gid, p, u["id"]), daemon=True).start()
+                started += p["count"]
+            elif m["type"] in (None, "standard"):
+                for _ in range(min(m["count"], max(0, 6 - started))):   # each coding problem takes minutes on a small model
+                    p2 = {**p, "language": "C and Python", "samples": 2}
+                    gid = c.execute("INSERT INTO generated_question_drafts(source,status,payload,created_by,created_at) VALUES('ai','generating',?,?,?)",
+                                    (json.dumps({"request": p2}), u["id"], db.now())).lastrowid
+                    threading.Thread(target=ai.run_draft, args=(gid, "generate", p2, u["id"]), daemon=True).start()
+                    started += 1
+            else:
+                skipped.append(assistant.TYPE_NAME[m["type"]])
+        audit(c, u, "assistant.fill", detail={"started": started}, ip=client_ip(req))
+        out["filling"] = {"started": started, "skipped": skipped}
     plan["picked"] = [q["id"] for q in chosen]
     out["plan"] = plan
     if not body.create:
@@ -964,8 +988,10 @@ class QuestionIn(BaseModel):
     max_marks: int = Field(default=100, ge=1, le=10000)
     practice: bool = False
     references: dict[str, str] = {}
-    qtype: str = Field(default="standard", pattern="^(standard|debug|complete|prompt|output|trace)$")
+    qtype: str = Field(default="standard", pattern="^(standard|debug|complete|prompt|output|trace|mcq)$")
     starter: dict[str, str] = {}
+    options: list[str] = Field(default=[], max_length=6)   # multiple choice: the texts students pick from
+    answer: str = Field(default="", max_length=20000)      # written-answer and multiple-choice types: the correct answer
     tests: list[TestIn] | None = None  # only used on create
 
 
@@ -1028,22 +1054,46 @@ def insert_tests(c, vid, tests):
     renumber(c, vid)
 
 
+def clean_options(b):
+    """Multiple choice: 2 to 6 different options, and the correct answer must be one of them."""
+    opts = list(dict.fromkeys(o.strip()[:500] for o in b.options if o.strip()))
+    if b.qtype == "mcq" and len(opts) < 2:
+        raise HTTPException(400, "A multiple-choice question needs at least two different options.")
+    if opts and b.answer.strip() and judge.normalize(b.answer) not in [judge.normalize(o) for o in opts]:
+        raise HTTPException(400, "The correct answer must be one of the options.")
+    return opts if b.qtype in judge.ANSWER_QTYPES else []
+
+
+def set_answer(c, vid, answer):
+    """Written-answer / multiple-choice question: one hidden test holding the correct text. Nothing to run, so it is valid at once."""
+    t = db.now()
+    c.execute("DELETE FROM test_cases WHERE version_id=?", (vid,))
+    c.execute("INSERT INTO test_cases(version_id,ordinal,input,expected,visibility,validated) VALUES(?,1,'',?,'hidden',1)", (vid, answer))
+    c.execute("DELETE FROM reference_solutions WHERE version_id=?", (vid,))
+    c.execute("INSERT INTO reference_solutions(version_id,language,code) VALUES(?,'answer',?)", (vid, answer))
+    c.execute("UPDATE question_versions SET validated_at=?, validation=? WHERE id=?",
+              (t, json.dumps({"answer": {"verdict": "AC", "passed": 1, "total": 1, "at": t, "compile_output": "", "failed": []}}), vid))
+
+
 def create_question(c, b: QuestionIn, u, source="manual"):
     t = db.now()
+    opts = clean_options(b)
     langs = ["prompt"] if b.qtype == "prompt" else ["answer"] if b.qtype in judge.ANSWER_QTYPES else [l for l in b.languages if l in judge.CODE_LANGS] or list(judge.CODE_LANGS)
     qid = c.execute("INSERT INTO questions(slug,category,difficulty,tags,status,source,practice,created_by,created_at,updated_at) VALUES(?,?,?,?, 'draft', ?,?,?,?,?)",
                     (unique_slug(c, slugify(b.slug or b.title)), b.category, b.difficulty, json.dumps([x.strip() for x in b.tags if x.strip()][:12]),
                      source, int(b.practice), u["id"], t, t)).lastrowid
-    vid = c.execute("INSERT INTO question_versions(question_id,version_no,title,statement,input_format,output_format,constraints,languages,time_limit_ms,memory_mb,max_marks,validation,qtype,starter,created_by,created_at) "
-                    "VALUES(?,1,?,?,?,?,?,?,?,?,?,'{}',?,?,?,?)",
+    vid = c.execute("INSERT INTO question_versions(question_id,version_no,title,statement,input_format,output_format,constraints,languages,time_limit_ms,memory_mb,max_marks,validation,qtype,starter,options,created_by,created_at) "
+                    "VALUES(?,1,?,?,?,?,?,?,?,?,?,'{}',?,?,?,?,?)",
                     (qid, b.title.strip(), b.statement, b.input_format, b.output_format, b.constraints, json.dumps(langs), b.time_limit_ms, b.memory_mb,
-                     b.max_marks, b.qtype, json.dumps({k: v for k, v in b.starter.items() if k in judge.LANGS and v.strip()}), u["id"], t)).lastrowid
+                     b.max_marks, b.qtype, json.dumps({k: v for k, v in b.starter.items() if k in judge.LANGS and v.strip()}), json.dumps(opts), u["id"], t)).lastrowid
     c.execute("UPDATE questions SET latest_version_id=? WHERE id=?", (vid, qid))
     for lang, code in b.references.items():
         if lang in judge.LANGS and code.strip():
             c.execute("INSERT INTO reference_solutions(version_id,language,code) VALUES(?,?,?)", (vid, lang, code))
     if b.tests:
         insert_tests(c, vid, b.tests)
+    if b.qtype in judge.ANSWER_QTYPES and b.answer.strip():
+        set_answer(c, vid, b.answer)
     return qid
 
 
@@ -1053,7 +1103,7 @@ def question_full(c, qid, include_versions=True):
         raise HTTPException(404, "Question not found.")
     v = db.one(c, "SELECT * FROM question_versions WHERE id=?", q["latest_version_id"])
     q["tags"] = db.jl(q["tags"])
-    q["version"] = {**v, "languages": db.jl(v["languages"]), "validation": db.jl(v["validation"], {}) or {}, "starter": db.jl(v.get("starter"), {}) or {}}
+    q["version"] = {**v, "languages": db.jl(v["languages"]), "validation": db.jl(v["validation"], {}) or {}, "starter": db.jl(v.get("starter"), {}) or {}, "options": db.jl(v.get("options"))}
     q["tests"] = db.all_(c, "SELECT * FROM test_cases WHERE version_id=? ORDER BY ordinal, id", v["id"])
     q["references"] = {r["language"]: r["code"] for r in db.all_(c, "SELECT language, code FROM reference_solutions WHERE version_id=?", v["id"])}
     q["locked"] = version_locked(c, v["id"])
@@ -1134,9 +1184,9 @@ def edit_question(qid: int, body: QuestionIn, req: Request, u=Depends(admin), c=
         vid, _ = editable_version(c, qid, u)
         old = db.one(c, "SELECT * FROM question_versions WHERE id=?", vid)
         langs = ["prompt"] if body.qtype == "prompt" else ["answer"] if body.qtype in judge.ANSWER_QTYPES else [l for l in body.languages if l in judge.CODE_LANGS] or list(judge.CODE_LANGS)
-        c.execute("UPDATE question_versions SET title=?, statement=?, input_format=?, output_format=?, constraints=?, languages=?, time_limit_ms=?, memory_mb=?, max_marks=?, qtype=?, starter=? WHERE id=?",
+        c.execute("UPDATE question_versions SET title=?, statement=?, input_format=?, output_format=?, constraints=?, languages=?, time_limit_ms=?, memory_mb=?, max_marks=?, qtype=?, starter=?, options=? WHERE id=?",
                   (body.title.strip(), body.statement, body.input_format, body.output_format, body.constraints, json.dumps(langs), body.time_limit_ms,
-                   body.memory_mb, body.max_marks, body.qtype, json.dumps({k: v for k, v in body.starter.items() if k in judge.LANGS and v.strip()}), vid))
+                   body.memory_mb, body.max_marks, body.qtype, json.dumps({k: v for k, v in body.starter.items() if k in judge.LANGS and v.strip()}), json.dumps(clean_options(body)), vid))
         c.execute("UPDATE questions SET slug=?, category=?, difficulty=?, tags=?, practice=?, updated_at=? WHERE id=?",
                   (unique_slug(c, slugify(body.slug or body.title), qid), body.category, body.difficulty, json.dumps([x.strip() for x in body.tags if x.strip()][:12]),
                    int(body.practice), db.now(), qid))
@@ -1148,6 +1198,8 @@ def edit_question(qid: int, body: QuestionIn, req: Request, u=Depends(admin), c=
                 c.execute("INSERT INTO reference_solutions(version_id,language,code) VALUES(?,?,?)", (vid, k, v))
         if old_refs != new_refs or old["time_limit_ms"] != body.time_limit_ms or old["memory_mb"] != body.memory_mb:
             invalidate(c, vid)
+        if body.qtype in judge.ANSWER_QTYPES and body.answer.strip():
+            set_answer(c, vid, body.answer)
         audit(c, u, "question.update", "question", qid, detail={"version_id": vid}, ip=client_ip(req))
     return question_full(c, qid)
 
@@ -1159,7 +1211,7 @@ def dup_question(qid: int, req: Request, u=Depends(admin), c=Depends(conn)):
     v = q["version"]
     body = QuestionIn(title=f"{v['title']} (Copy)", category=q["category"], difficulty=q["difficulty"], tags=q["tags"], statement=v["statement"],
                       input_format=v["input_format"], output_format=v["output_format"], constraints=v["constraints"], languages=v["languages"],
-                      time_limit_ms=v["time_limit_ms"], memory_mb=v["memory_mb"], max_marks=v["max_marks"], references=q["references"], qtype=v.get("qtype") or "standard", starter=v["starter"],
+                      time_limit_ms=v["time_limit_ms"], memory_mb=v["memory_mb"], max_marks=v["max_marks"], references=q["references"], qtype=v.get("qtype") or "standard", starter=v["starter"], options=v["options"],
                       tests=[TestIn(**{k: t[k] for k in ("input", "expected", "visibility", "kind", "weight", "explanation", "description")}) for t in q["tests"]])
     with db.tx(c):
         nid = create_question(c, body, u, "duplicate")
@@ -1177,7 +1229,7 @@ def q_status(qid: int, body: QStatusIn, req: Request, u=Depends(admin), c=Depend
     q = question_full(c, qid, False)
     if body.status == "approved":
         v = q["version"]
-        missing = [k for k in ("statement", "input_format", "output_format") if not v[k].strip()]
+        missing = [k for k in (("statement",) if v.get("qtype") in judge.ANSWER_QTYPES else ("statement", "input_format", "output_format")) if not v[k].strip()]
         if missing:
             raise HTTPException(400, f"Fill in: {', '.join(missing)} before approving.")
         if not any(t["visibility"] == "hidden" for t in q["tests"]):
@@ -1510,7 +1562,8 @@ def approve_draft(gid: int, req: Request, u=Depends(admin), c=Depends(conn)):
                       difficulty=p.get("difficulty") if p.get("difficulty") in ("Easy", "Intermediate", "Challenging") else "Easy",
                       tags=p.get("tags") or [], statement=p.get("statement", ""), input_format=p.get("input_format", ""), output_format=p.get("output_format", ""),
                       constraints=p.get("constraints", ""), references={k: v for k, v in (p.get("reference") or {}).items() if k in judge.LANGS and v},
-                      qtype=p.get("qtype") if p.get("qtype") in ("standard", "debug", "complete", "prompt", "output", "trace") else "standard",
+                      qtype=p.get("qtype") if p.get("qtype") in ("standard", "debug", "complete", "prompt", "output", "trace", "mcq") else "standard",
+                      options=[str(o) for o in (p.get("options") or [])][:6], answer=str(p.get("answer") or ""),
                       starter={k: str(v) for k, v in (p.get("starter") or {}).items() if k in judge.LANGS and v},
                       tests=[TestIn(**{k: v for k, v in t.items() if k in TestIn.model_fields}) for t in tests])
     with db.tx(c):
@@ -1534,9 +1587,46 @@ def reject_draft(gid: int, req: Request, u=Depends(admin), c=Depends(conn)):
 # ================= AI assistant =================
 
 @router.get("/ai/status")
-def ai_status(u=Depends(admin)):
+def ai_status(u=Depends(admin), c=Depends(conn)):
     need(u, "ai")
-    return ai.status()
+    return {**ai.status(), "autogrow": db.setting(c, "practice_autogrow", "true") == "true"}
+
+
+class AISetIn(BaseModel):
+    model: str | None = Field(default=None, max_length=120)
+    autogrow: bool | None = None
+
+
+@router.put("/ai/settings")
+def ai_settings(body: AISetIn, req: Request, u=Depends(admin), c=Depends(conn)):
+    """Pick which installed model to use, and switch practice auto-grow on or off. Takes effect within 20 seconds, no restart."""
+    need(u, "ai")
+    if body.model is not None:
+        if body.model and body.model not in ai.status()["models"]:
+            raise HTTPException(400, "That model is not installed on this computer.")
+        db.set_setting(c, "ai_model", body.model)
+    if body.autogrow is not None:
+        db.set_setting(c, "practice_autogrow", "true" if body.autogrow else "false")
+    audit(c, u, "ai.settings", detail=body.model_dump(exclude_none=True), ip=client_ip(req))
+    return {**ai.status(), "autogrow": db.setting(c, "practice_autogrow", "true") == "true"}
+
+
+class AIMcqIn(BaseModel):
+    topic: str = Field(min_length=2, max_length=200)
+    difficulty: str = Field(default="Easy", pattern="^(Easy|Intermediate|Challenging)$")
+    style: str = Field(default="output", pattern="^(output|concept)$")
+    count: int = Field(default=5, ge=1, le=10)
+
+
+@router.post("/ai/mcq")
+def ai_mcq(body: AIMcqIn, req: Request, u=Depends(admin), c=Depends(conn)):
+    need(u, "ai")
+    need_ai()
+    gid = c.execute("INSERT INTO generated_question_drafts(source,status,payload,created_by,created_at) VALUES('ai','generating',?,?,?)",
+                    (json.dumps({"request": body.model_dump(), "title": f"{body.count} multiple-choice: {body.topic}"}), u["id"], db.now())).lastrowid
+    audit(c, u, "ai.mcq", "draft", gid, detail=body.model_dump(), ip=client_ip(req))
+    threading.Thread(target=ai.run_mcq, args=(gid, body.model_dump(), u["id"]), daemon=True).start()
+    return {"draft_id": gid}
 
 
 class AIGenIn(BaseModel):
@@ -1550,7 +1640,7 @@ class AIGenIn(BaseModel):
 
 def need_ai():
     if not ai.enabled():
-        raise HTTPException(503, "AI is not configured on this server. Questions can still be created manually.")
+        raise HTTPException(503, ai.status(False).get("reason") or "No AI model is available. Questions can still be created by hand.")
 
 
 @router.post("/ai/generate")
