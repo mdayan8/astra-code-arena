@@ -679,7 +679,7 @@ def run():
     print("Multiple choice, placement modules, learning path")
     pr = s3.get(f"{BASE}/api/student/practice")
     place = [x for x in pr if x["category"].startswith("Placement: ")]
-    assert len(place) == 38 and sum(x["qtype"] == "mcq" for x in place) == 28, len(place)
+    assert len(place) == 52 and sum(x["qtype"] == "mcq" for x in place) == 42, len(place)
     mq = next(x for x in place if x["qtype"] == "mcq")
     pv = s3.get(f"{BASE}/api/student/practice/{mq['id']}")
     right = sup.get(f"{A}/questions/{mq['id']}")["references"]["answer"]
@@ -689,7 +689,7 @@ def run():
         time.sleep(5.1)
         r = s3.post(f"{BASE}/api/student/submissions", {"competition_id": None, "question_id": mq["id"], "language": "answer", "code": code, "kind": "submit"})
         assert wait_sub(s3, r["id"])["verdict"] == verdict
-    ok("three placement modules ship with 38 questions (28 multiple choice); a wrong option is WA, the right one AC; practice allows retries")
+    ok("four placement modules ship with 52 questions (42 multiple choice, 14 of them logical thinking); a wrong option is WA, the right one AC; practice allows retries")
     mbody = {"title": "MCQ: Loop count", "category": "Loops", "difficulty": "Easy", "tags": [], "statement": "How many times does `for(i=0;i<5;i++)` run its body?",
              "qtype": "mcq", "options": ["4", "5", "6", "Forever"], "answer": "5"}
     evA.post(f"{A}/questions", {**mbody, "answer": "7"}, expect=400)
@@ -713,8 +713,8 @@ def run():
     ok("organiser creates a multiple-choice question (bad answer / too few options refused); in a competition the first answer is final")
     jr = s3.get(f"{BASE}/api/student/journey")
     names = [x["category"] for x in jr["stages"]]
-    assert names[:5] == ["C Basics", "C Logic Building", "Placement: Predict the Output", "Placement: CS Fundamentals", "Placement: Coding Patterns"], names
-    assert jr["current"] == 0 and jr["stages"][0]["next_id"] and jr["stages"][2]["solved"] + jr["stages"][3]["solved"] >= 1 and all(x["total"] for x in jr["stages"])
+    assert names[:5] == ["C Basics", "C Logic Building", "Placement: Predict the Output", "Placement: CS Fundamentals", "Placement: Logical Thinking"], names
+    assert names[5] == "Placement: Coding Patterns" and jr["current"] == 0 and jr["stages"][0]["next_id"] and jr["stages"][2]["solved"] + jr["stages"][3]["solved"] >= 1 and all(x["total"] for x in jr["stages"])
     ins = s3.get(f"{BASE}/api/student/insights")
     assert ins["level"] in ("Easy", "Intermediate", "Challenging") and ins["recommendations"]
     pm = evA.post(f"{A}/assistant/competition", {"message": "placement mock: 6 moderate mcq, 2 easy coding, 40 minutes"})

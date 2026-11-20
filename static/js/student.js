@@ -730,26 +730,34 @@ async function workspace({ mode, compId, qid, q: startQ }) {
       <h2 style="font-size:21px">${esc(p.title)}</h2>
       ${p.qtype === 'debug' ? `<div class="notice warn small" style="margin-bottom:12px">${ico('alert', 14)} <b>Fix the bug.</b> The editor starts with a program that has a mistake. Find it and fix it.</div>`
         : p.qtype === 'complete' ? `<div class="notice info small" style="margin-bottom:12px">${ico('pencil', 14)} <b>Complete the code.</b> Fill in the missing part marked in the starter code.</div>`
-        : p.options?.length ? `<div class="notice info small" style="margin-bottom:12px">${ico('check', 14)} <b>Multiple choice.</b> Work it out, pick one option below, then press Submit.${contest ? ' In a competition your first answer is final.' : ''}</div>`
-        : p.qtype === 'output' || p.qtype === 'trace' ? `<div class="notice info small" style="margin-bottom:12px">${ico('eye', 14)} <b>${p.qtype === 'output' ? 'Predict the output.' : 'Trace the code.'}</b> Do not run anything: read the code, work it out, and type your answer in the box on the right exactly as it would appear. Then press Submit.</div>`
+        : p.options?.length ? `<div class="notice info small" style="margin-bottom:12px">${ico('check', 14)} <b>Multiple choice.</b> Work it out, pick one option below, then press Submit answer.${contest ? ' In a competition your first answer is final.' : ''}</div>`
+        : p.qtype === 'output' || p.qtype === 'trace' ? `<div class="notice info small" style="margin-bottom:12px">${ico('eye', 14)} <b>${p.qtype === 'output' ? 'Predict the output.' : 'Trace the code.'}</b> Do not run anything: read the code, work it out, and type your answer below exactly as it would appear. Then press Submit answer.</div>`
         : p.qtype === 'prompt' ? `<div class="notice info small" style="margin-bottom:12px">${ico('sparkles', 14)} <b>Prompt challenge.</b> Write instructions for the AI, not code. Each test input is sent to the AI with your prompt, and its reply must exactly match the expected output. Use Run to try it on your own input.</div>` : ''}
       <div class="row wrap small muted" style="gap:14px;margin-bottom:14px">${p.marks ? `<span>${ico('medal')} ${p.marks} marks</span>` : ''}${p.difficulty ? `<span>${esc(p.difficulty)}</span>` : ''}<span>${ico('clock')} ${p.time_limit_ms / 1000}s</span><span>${ico('cpu')} ${p.memory_mb} MB</span></div>
       <div class="prose">${md(p.statement)}${p.input_format ? `<h4>Input format</h4>${md(p.input_format)}` : ''}${p.output_format ? `<h4>Output format</h4>${md(p.output_format)}` : ''}${p.constraints ? `<h4>Constraints</h4>${md(p.constraints)}` : ''}</div>
       ${p.options?.length ? `<div class="mcq">${p.options.map((o, i) => `<button type="button" class="opt" data-opt="${i}"><span class="k">${'ABCDEF'[i]}</span><pre>${esc(o)}</pre></button>`).join('')}</div>` : ''}
+      ${ansOnly(p) ? `${p.options?.length ? '' : '<label class="field" style="margin-top:14px"><span class="lbl">Your answer</span><textarea class="textarea mono" id="anstxt" rows="4" spellcheck="false" placeholder="Type exactly what would be printed"></textarea></label>'}
+        <div class="row" style="margin-top:14px"><button class="btn primary lg" id="ansSub">Submit answer</button><span class="small muted">${p.options?.length ? 'Pick one option first.' : 'Nothing to run: work it out and type it.'}</span></div>` : ''}
       ${p.samples.length ? `<h4 class="exh">${ico('layers', 14)} Examples</h4>` : ''}${p.samples.map((s, i) => `<div class="sample"><div class="small" style="font-weight:650;margin-bottom:8px">Example ${i + 1}</div><div class="io"><div><div class="lbl">Input <button class="btn xs ghost" data-cp="${i}">Copy</button></div><pre>${esc(s.input)}</pre></div><div><div class="lbl">Output</div><pre>${esc(s.output)}</pre></div></div>
         ${s.explanation ? `<div class="prose small" style="margin-top:8px"><b>Explanation:</b> ${md(s.explanation)}</div>` : ''}</div>`).join('')}`;
     $$('[data-opt]').forEach((b) => b.onclick = () => { editor.setValue(cur.options[b.dataset.opt]); markOpt(); });
+    if ($('#anstxt')) $('#anstxt').oninput = (e) => editor.setValue(e.target.value);
+    if ($('#ansSub')) $('#ansSub').onclick = () => (editor.getValue().trim() ? $('#subBtn').click() : toast(cur.options?.length ? 'Pick an option first.' : 'Type your answer first.', 'info'));
     $$('[data-cp]').forEach((b) => b.onclick = () => { const t = cur.samples[b.dataset.cp].input; internalClip = t; navigator.clipboard?.writeText(t); toast('Sample input copied', 'ok'); });
   };
   const drawLang = () => {
     $('#lang').innerHTML = cur.languages.map((l) => `<option value="${l}" ${l === lang ? 'selected' : ''}>${esc(S.info.languages[l]?.name || l)}</option>`).join('');
     editor.setModel(getModel(cur, lang));
   };
-  const markOpt = () => $$('[data-opt]').forEach((b) => b.classList.toggle('on', cur.options[b.dataset.opt].trim() === editor.getValue().trim()));
+  // questions with nothing to code (multiple choice, predict the output, tracing): no editor, the answer sits under the question
+  const ansOnly = (p) => p.languages.length === 1 && p.languages[0] === 'answer';
+  const markOpt = () => { $$('[data-opt]').forEach((b) => b.classList.toggle('on', cur.options[b.dataset.opt].trim() === editor.getValue().trim())); if ($('#anstxt')) $('#anstxt').value = editor.getValue(); };
   const select = (p) => {
     cur = p; lang = langOf(p);
-    drawTabs(); drawProblem(); drawLang(); markOpt();
-    if (!p.samples.length) { showTab('custom'); toast('This problem has no examples: try your own input in the Custom input tab.', 'info'); }
+    ws.classList.toggle('ansmode', ansOnly(p));
+    drawTabs(); drawProblem(); drawLang(); markOpt(); editor.layout?.();
+    if (ansOnly(p)) { showTab('res'); $('#out').innerHTML = '<div class="muted small">Your result appears here after you submit.</div>'; }
+    else if (!p.samples.length) { showTab('custom'); toast('This problem has no examples: try your own input in the Custom input tab.', 'info'); }
     else { showTab('res'); $('#out').innerHTML = `<div class="muted small">Run your code on the examples, then Submit to be judged on hidden tests.</div>`; }
     track('problem_open', null, p.id);
     history.replaceState(null, '', contest ? `#/arena/${compId}?q=${p.id}` : `#/practice/${p.id}`);

@@ -503,6 +503,7 @@ JOURNEY = [
     ("C Logic Building", "Number programs and patterns: the warm-up coding questions of most placement tests."),
     ("Placement: Predict the Output", "Read code and say what it prints. Pseudo-code and output questions are in almost every company's test."),
     ("Placement: CS Fundamentals", "Complexity, data structures, OOP, DBMS and OS basics: the technical multiple-choice section."),
+    ("Placement: Logical Thinking", "Series, ratios, time and work, directions and deduction: the aptitude section that comes first in most tests. No code, only thinking."),
     ("Placement: Coding Patterns", "Arrays and strings problems of the size asked in the coding round. Aim to solve each within 20 minutes."),
 ]
 

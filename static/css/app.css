@@ -661,3 +661,12 @@ label.field > .hint { display: block; line-height: 1.4; }
 .pick3 button.on { border-color: var(--accent); background: var(--accent-soft); }
 @media (max-width: 760px) { .how3, .pick3 { grid-template-columns: 1fr; } }
 [hidden] { display: none !important; }
+
+/* ---- answer-only questions: no code editor, one centred column ---- */
+#ws.ansmode .ws-main { display: block; overflow: auto; background: var(--surface); }
+#ws.ansmode .ws-left, #ws.ansmode .ws-right { max-width: 860px; margin: 0 auto; overflow: visible; }
+#ws.ansmode .ws-left { padding-bottom: 8px; }
+#ws.ansmode .ws-right { display: block; padding: 0 26px 40px; }
+#ws.ansmode #vg, #ws.ansmode .ws-bar, #ws.ansmode #editor, #ws.ansmode #hg, #ws.ansmode #btabs [data-t=custom] { display: none; }
+#ws.ansmode .ws-bottom { display: block; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+#ws.ansmode .ws-out { min-height: 90px; }

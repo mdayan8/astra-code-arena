@@ -14,7 +14,7 @@ WORDNUM = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5
 ORD = {"1st": 1, "first": 1, "2nd": 2, "second": 2, "3rd": 3, "third": 3, "4th": 4, "fourth": 4, "final": 4}
 MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
 DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-TYPES = [("mcq", r"mcq|multiple.?choice|objective|choose the|aptitude|fundamental|theory|concept"), ("debug", r"debug|fix(?:ing)? (?:the )?bug|bug ?fix|find the bug|\bbugs?\b"), ("complete", r"complet|fill in|fill the|missing code"),
+TYPES = [("mcq", r"mcq|multiple.?choice|objective|choose the|aptitude|fundamental|theory|concept|logical|reasoning"), ("debug", r"debug|fix(?:ing)? (?:the )?bug|bug ?fix|find the bug|\bbugs?\b"), ("complete", r"complet|fill in|fill the|missing code"),
          ("trace", r"trac|dry.?run"), ("output", r"output|predict"), ("prompt", r"prompt"),
          ("standard", r"coding|code writing|standard|programming|write (?:a |the )?(?:program|code)|logic")]
 TYPE_NAME = {"standard": "coding", "debug": "fix-the-bug", "complete": "complete-the-code", "output": "predict-the-output", "trace": "code-tracing", "prompt": "prompt", "mcq": "multiple-choice", None: ""}
@@ -91,6 +91,8 @@ def _questions(t):
             continue
         tm = re.search(r"\b(?:on|about|from|covering) ([a-z0-9 +\-]{2,40})", rest)
         topic = " ".join(w for w in (tm.group(1).split() if tm else []) if w not in STOP)[:40]
+        if not topic and re.search(r"logical|reasoning|aptitude", rest):
+            topic = "logical"   # matches the Logical Thinking module
         specs.append({"count": n, "type": typ, "difficulty": diff, "topic": topic})
     return specs
 
@@ -248,6 +250,7 @@ if __name__ == "__main__":  # self-check
     assert parse("at 9am", {}, [], now)["start_at"] == "2026-11-21T09:00"      # 9am already passed today -> tomorrow
     assert parse("5 hard questions on arrays", {}, [], now)["questions"] == [{"count": 5, "type": None, "difficulty": "Challenging", "topic": "arrays"}]
     assert "questions" not in parse("for 2nd year students, 90 minutes", {}, [], now)
+    assert parse("5 logical thinking questions", {}, [], now)["questions"] == [{"count": 5, "type": "mcq", "difficulty": None, "topic": "logical"}]
     assert parse("10 moderate mcq on pointers and 2 high coding", {}, [], now)["questions"] == [
         {"count": 10, "type": "mcq", "difficulty": "Intermediate", "topic": "pointers"}, {"count": 2, "type": "standard", "difficulty": "Challenging", "topic": ""}]
     print("assistant self-check ok")

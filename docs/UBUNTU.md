@@ -283,7 +283,9 @@ Run **Diagnose & fix** in the control panel (or `astra-arena doctor`) first. It 
 
 **Multiple choice.** In Question Bank choose the type *Multiple choice*, write the question (and any code) in the statement, fill the options and select the circle next to the correct one. Nothing else is needed: it is valid at once. In practice students may retry; in a competition the first answer is final, because with four options a second try would be a free guess.
 
-**Built-in practice.** Five modules ship with the platform and appear for students as a learning path, in the order campus placement tests are built: C Basics, C Logic Building, Predict the Output (multiple choice, C and pseudo-code), CS Fundamentals (multiple choice) and Coding Patterns. Every answer in them was produced by really compiling and running the code. Modules you add later join the path by themselves, and each module with five or more problems gets its own badge.
+**No editor when there is nothing to code.** Multiple-choice, predict-the-output and tracing questions open as a plain question page: the options (or an answer box) and a Submit answer button, with no code editor. Coding questions open with the editor as before. A competition can be all multiple choice, all coding, or any mix; each question opens in the right view.
+
+**Built-in practice.** Six modules ship with the platform and appear for students as a learning path, in the order campus placement tests are built: C Basics, C Logic Building, Predict the Output (multiple choice, C and pseudo-code), CS Fundamentals (multiple choice), Logical Thinking (aptitude and reasoning, multiple choice) and Coding Patterns. Every answer in them was produced by really compiling and running the code. Modules you add later join the path by themselves, and each module with five or more problems gets its own badge.
 
 **What adapts by itself.** The student's level moves up or down with their last few problems; recommendations follow their weakest topic; streaks, badges and module badges are awarded without any setup.
 

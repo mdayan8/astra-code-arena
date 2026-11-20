@@ -1,0 +1,444 @@
+{
+ "key": "logic_v1",
+ "modules": [
+  {
+   "category": "Placement: Logical Thinking",
+   "questions": [
+    {
+     "title": "Logic: Next in the Series",
+     "statement": "What comes next?\n\n`3, 6, 11, 18, 27, ?`",
+     "input_format": "",
+     "output_format": "",
+     "difficulty": "Easy",
+     "tags": [
+      "series"
+     ],
+     "qtype": "mcq",
+     "languages": [
+      "answer"
+     ],
+     "references": {
+      "answer": "38"
+     },
+     "starter": {},
+     "options": [
+      "37",
+      "38",
+      "36",
+      "40"
+     ],
+     "tests": [
+      {
+       "input": "",
+       "expected": "38",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Logic: Letter Code",
+     "statement": "In a certain code, `CODE` is written as `EQFG`. How is `LOOP` written in that code?",
+     "input_format": "",
+     "output_format": "",
+     "difficulty": "Easy",
+     "tags": [
+      "coding-decoding"
+     ],
+     "qtype": "mcq",
+     "languages": [
+      "answer"
+     ],
+     "references": {
+      "answer": "NQQR"
+     },
+     "starter": {},
+     "options": [
+      "NQPR",
+      "NQQR",
+      "MPPQ",
+      "ORRS"
+     ],
+     "tests": [
+      {
+       "input": "",
+       "expected": "NQQR",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Logic: Odd One Out",
+     "statement": "Which number does not belong with the others?\n\n`121, 169, 200, 225, 289`",
+     "input_format": "",
+     "output_format": "",
+     "difficulty": "Easy",
+     "tags": [
+      "classification"
+     ],
+     "qtype": "mcq",
+     "languages": [
+      "answer"
+     ],
+     "references": {
+      "answer": "200"
+     },
+     "starter": {},
+     "options": [
+      "289",
+      "169",
+      "200",
+      "121"
+     ],
+     "tests": [
+      {
+       "input": "",
+       "expected": "200",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Logic: Work Together",
+     "statement": "A can finish a job in 12 days and B can finish it in 6 days. Working together, how many days do they need?",
+     "input_format": "",
+     "output_format": "",
+     "difficulty": "Easy",
+     "tags": [
+      "time-and-work"
+     ],
+     "qtype": "mcq",
+     "languages": [
+      "answer"
+     ],
+     "references": {
+      "answer": "4 days"
+     },
+     "starter": {},
+     "options": [
+      "18 days",
+      "3 days",
+      "4 days",
+      "9 days"
+     ],
+     "tests": [
+      {
+       "input": "",
+       "expected": "4 days",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Logic: Ratio in a Class",
+     "statement": "A class of 40 students has boys and girls in the ratio 3 : 5. How many boys are there?",
+     "input_format": "",
+     "output_format": "",
+     "difficulty": "Easy",
+     "tags": [
+      "ratio"
+     ],
+     "qtype": "mcq",
+     "languages": [
+      "answer"
+     ],
+     "references": {
+      "answer": "15"
+     },
+     "starter": {},
+     "options": [
+      "15",
+      "25",
+      "24",
+      "12"
+     ],
+     "tests": [
+      {
+       "input": "",
+       "expected": "15",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Logic: Growth Twice",
+     "statement": "A club has 2000 members. It grows by 10% this year and by 10% again next year. How many members will it have?",
+     "input_format": "",
+     "output_format": "",
+     "difficulty": "Easy",
+     "tags": [
+      "percentage"
+     ],
+     "qtype": "mcq",
+     "languages": [
+      "answer"
+     ],
+     "references": {
+      "answer": "2420"
+     },
+     "starter": {},
+     "options": [
+      "2400",
+      "2420",
+      "2200",
+      "2440"
+     ],
+     "tests": [
+      {
+       "input": "",
+       "expected": "2420",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Logic: Handshakes",
+     "statement": "8 people meet and each shakes hands once with every other person. How many handshakes take place?",
+     "input_format": "",
+     "output_format": "",
+     "difficulty": "Easy",
+     "tags": [
+      "counting"
+     ],
+     "qtype": "mcq",
+     "languages": [
+      "answer"
+     ],
+     "references": {
+      "answer": "28"
+     },
+     "starter": {},
+     "options": [
+      "28",
+      "64",
+      "56",
+      "16"
+     ],
+     "tests": [
+      {
+       "input": "",
+       "expected": "28",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Logic: Which Day",
+     "statement": "India's Republic Day is 26 January. On which day of the week does it fall in 2026?",
+     "input_format": "",
+     "output_format": "",
+     "difficulty": "Intermediate",
+     "tags": [
+      "calendar"
+     ],
+     "qtype": "mcq",
+     "languages": [
+      "answer"
+     ],
+     "references": {
+      "answer": "Monday"
+     },
+     "starter": {},
+     "options": [
+      "Sunday",
+      "Tuesday",
+      "Monday",
+      "Saturday"
+     ],
+     "tests": [
+      {
+       "input": "",
+       "expected": "Monday",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Logic: Clock Angle",
+     "statement": "What is the angle between the hour hand and the minute hand of a clock at 3:30?",
+     "input_format": "",
+     "output_format": "",
+     "difficulty": "Intermediate",
+     "tags": [
+      "clock"
+     ],
+     "qtype": "mcq",
+     "languages": [
+      "answer"
+     ],
+     "references": {
+      "answer": "75 degrees"
+     },
+     "starter": {},
+     "options": [
+      "90 degrees",
+      "75 degrees",
+      "60 degrees",
+      "105 degrees"
+     ],
+     "tests": [
+      {
+       "input": "",
+       "expected": "75 degrees",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Logic: Walking Directions",
+     "statement": "Ravi walks 6 m north, then 8 m east, then 12 m south, then 16 m west. How far is he from where he started, in a straight line?",
+     "input_format": "",
+     "output_format": "",
+     "difficulty": "Intermediate",
+     "tags": [
+      "directions"
+     ],
+     "qtype": "mcq",
+     "languages": [
+      "answer"
+     ],
+     "references": {
+      "answer": "10 m"
+     },
+     "starter": {},
+     "options": [
+      "42 m",
+      "10 m",
+      "14 m",
+      "8 m"
+     ],
+     "tests": [
+      {
+       "input": "",
+       "expected": "10 m",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Logic: Father and Son",
+     "statement": "A father is three times as old as his son. In 10 years he will be twice as old as his son. How old is the father now?",
+     "input_format": "",
+     "output_format": "",
+     "difficulty": "Intermediate",
+     "tags": [
+      "ages"
+     ],
+     "qtype": "mcq",
+     "languages": [
+      "answer"
+     ],
+     "references": {
+      "answer": "30 years"
+     },
+     "starter": {},
+     "options": [
+      "36 years",
+      "45 years",
+      "30 years",
+      "40 years"
+     ],
+     "tests": [
+      {
+       "input": "",
+       "expected": "30 years",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Logic: Train and Bridge",
+     "statement": "A train 150 m long crosses a bridge 250 m long in 20 seconds. What is the speed of the train?",
+     "input_format": "",
+     "output_format": "",
+     "difficulty": "Intermediate",
+     "tags": [
+      "speed-distance"
+     ],
+     "qtype": "mcq",
+     "languages": [
+      "answer"
+     ],
+     "references": {
+      "answer": "72 km/h"
+     },
+     "starter": {},
+     "options": [
+      "27 km/h",
+      "45 km/h",
+      "20 km/h",
+      "72 km/h"
+     ],
+     "tests": [
+      {
+       "input": "",
+       "expected": "72 km/h",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Logic: Five in a Row",
+     "statement": "Five friends A, B, C, D and E sit in a row facing north. C sits at the left end and D at the right end. A and B sit next to each other, and B is to the left of A. E sits next to D. Who sits in the middle?",
+     "input_format": "",
+     "output_format": "",
+     "difficulty": "Intermediate",
+     "tags": [
+      "seating"
+     ],
+     "qtype": "mcq",
+     "languages": [
+      "answer"
+     ],
+     "references": {
+      "answer": "A"
+     },
+     "starter": {},
+     "options": [
+      "E",
+      "C",
+      "A",
+      "B"
+     ],
+     "tests": [
+      {
+       "input": "",
+       "expected": "A",
+       "visibility": "hidden"
+      }
+     ]
+    },
+    {
+     "title": "Logic: One True Statement",
+     "statement": "A box holds 1, 2 or 3 coins. Three notes are stuck on it:\n\n- Note 1: \"There is exactly 1 coin.\"\n- Note 2: \"There is more than 1 coin.\"\n- Note 3: \"There are fewer than 3 coins.\"\n\nExactly one note is true. How many coins are in the box?",
+     "input_format": "",
+     "output_format": "",
+     "difficulty": "Challenging",
+     "tags": [
+      "deduction"
+     ],
+     "qtype": "mcq",
+     "languages": [
+      "answer"
+     ],
+     "references": {
+      "answer": "3"
+     },
+     "starter": {},
+     "options": [
+      "3",
+      "It cannot be decided",
+      "1",
+      "2"
+     ],
+     "tests": [
+      {
+       "input": "",
+       "expected": "3",
+       "visibility": "hidden"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
