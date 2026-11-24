@@ -216,6 +216,7 @@ WorkingDirectory=$APP
 ExecStart=$APP/.venv/bin/python launcher.py --background
 Restart=always
 RestartSec=5
+LimitNOFILE=65536
 KillMode=control-group
 TimeoutStopSec=30
 # keep the desktop responsive while judging

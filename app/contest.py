@@ -2,6 +2,8 @@
 import json
 import random
 import secrets
+import threading
+import time
 
 from . import db
 
@@ -248,7 +250,36 @@ def compute_leaderboard(c, comp):
             "rows": rows, "tie_break": cfg["tie_break"]}
 
 
-def leaderboard(c, comp):
+_LB, _LB_LOCKS, _LB_GUARD = {}, {}, threading.Lock()
+
+
+def _lb_version(c, comp):
+    """Cheap fingerprint of everything the ranking depends on (all indexed lookups)."""
+    s = db.one(c, "SELECT COUNT(*) AS n, MAX(judged_at) AS t FROM submissions WHERE competition_id=? AND kind='submit' AND status='done'", comp["id"])
+    v = db.one(c, "SELECT COUNT(*) AS n FROM activity_events WHERE competition_id=? AND type IN ('violation','reopened')", comp["id"])
+    o = db.one(c, "SELECT (SELECT COUNT(*) FROM participant_finish WHERE competition_id=?) AS f, (SELECT COUNT(*) FROM competition_participants WHERE competition_id=?) AS p,"
+                  " (SELECT COUNT(*) FROM competition_participants WHERE competition_id=? AND questions IS NOT NULL) AS q", comp["id"], comp["id"], comp["id"])
+    return (comp["status"], comp.get("results_published_at"), comp["scoring"], s["n"], s["t"], v["n"], o["f"], o["p"], o["q"])
+
+
+def leaderboard(c, comp, fresh=False):
+    """Shared, cached ranking. During a live round 500 students poll it and press Finish together; computing it once per
+    change (and at most every 2 s while live) instead of once per request keeps every request fast."""
+    with _LB_GUARD:
+        lock = _LB_LOCKS.setdefault(comp["id"], threading.Lock())
+    with lock:   # concurrent callers wait for the one computation and reuse it
+        hit = _LB.get(comp["id"])
+        if hit and not fresh and comp["status"] in ("live", "paused") and time.time() - hit[0] < 2:
+            return hit[2]
+        ver = _lb_version(c, comp)
+        if hit and hit[1] == ver:
+            return hit[2]
+        lb = _leaderboard(c, comp)
+        _LB[comp["id"]] = (time.time(), ver, lb)
+        return lb
+
+
+def _leaderboard(c, comp):
     """Finalized competitions read the frozen snapshot; everything else is computed live."""
     if comp["status"] in ("finalized", "archived") and db.one(c, "SELECT 1 AS x FROM leaderboard_entries WHERE competition_id=? LIMIT 1", comp["id"]):
         lb = compute_leaderboard(c, comp)  # for question headers

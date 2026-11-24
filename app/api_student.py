@@ -512,10 +512,11 @@ def finish(comp_id: int, req: Request, u=Depends(student), c=Depends(conn)):
     c.execute("INSERT OR IGNORE INTO participant_finish(competition_id,user_id,finished_at) VALUES(?,?,?)", (comp_id, u["id"], db.now()))
     c.execute("INSERT INTO activity_events(competition_id,user_id,type,detail,ip,created_at) VALUES(?,?,'heartbeat',?,?,?)",
               (comp_id, u["id"], json.dumps({"final_submit": True}), client_ip(req), db.now()))
-    lb = contest.compute_leaderboard(c, comp)
-    me = next((r for r in lb["rows"] if r["user_id"] == u["id"]), None)
     if not contest.results_visible(comp):  # organisers publish results later: don't reveal score or rank yet
-        return {"ok": True, "hidden": True, "solved": me["solved"] if me else 0, "of": len(lb["rows"])}
+        solved = db.one(c, "SELECT COUNT(DISTINCT question_id) AS n FROM submissions WHERE competition_id=? AND user_id=? AND kind='submit' AND verdict='AC'", comp_id, u["id"])["n"]
+        return {"ok": True, "hidden": True, "solved": solved}
+    lb = contest.leaderboard(c, comp, fresh=True)   # their own final score must include the last submission
+    me = next((r for r in lb["rows"] if r["user_id"] == u["id"]), None)
     return {"ok": True, "score": me["score"] if me else 0, "solved": me["solved"] if me else 0, "rank": me["rank"] if me else None,
             "of": len(lb["rows"]), "max": sum(q["marks"] for q in lb["questions"] if q["id"] in set(contest.assigned(c, comp, u["id"])))}
 
@@ -743,7 +744,8 @@ def activity(body: ActivityIn, req: Request, u=Depends(student), c=Depends(conn)
             continue   # the same internet connection (for example after a page reload) counts once per 5 minutes
         rows.append((body.competition_id, u["id"], qid, typ, detail, ip, at))
     if rows:
-        c.executemany("INSERT INTO activity_events(competition_id,user_id,question_id,type,detail,ip,created_at) VALUES(?,?,?,?,?,?,?)", rows)
+        with db.tx(c):
+            c.executemany("INSERT INTO activity_events(competition_id,user_id,question_id,type,detail,ip,created_at) VALUES(?,?,?,?,?,?,?)", rows)
     if any(r[3] == "violation" for r in rows):
         return {"ok": True, "stored": len(rows), **enforce_warnings(c, body.competition_id, u["id"], ip)}
     return {"ok": True, "stored": len(rows)}

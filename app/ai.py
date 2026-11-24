@@ -359,7 +359,12 @@ def run_mcq(draft_id: int, params: dict, user_id: int):
                 qid = create_question(c, QuestionIn(title=q["title"][:150], category=str(params.get("topic") or "Problem Solving")[:60], difficulty=params.get("difficulty") or "Easy",
                                                     tags=["mcq", "ai"], statement=st, qtype="mcq", options=q["options"], answer=q["answer"], practice=True), {"id": user_id}, "ai")
             vid = db.one(c, "SELECT latest_version_id AS v FROM questions WHERE id=?", qid)["v"]
-            norm = lambda x: "\n".join(l.rstrip() for l in str(x).strip().splitlines())
+            def norm(x):   # same text, or the same number (2.4 == 2.4000000000000004 == 2.40)
+                t = "\n".join(l.rstrip() for l in str(x).strip().splitlines())
+                try:
+                    return repr(round(float(t), 6))
+                except ValueError:
+                    return t
             prog = ("c", q["code"]) if q["code"] else ("python", q["check"]) if q["check"] else None
             real = _run(c, qid, vid, user_id, *prog) if prog else None
             if prog and real is not None and real.strip():

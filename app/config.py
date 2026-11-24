@@ -51,3 +51,15 @@ ALLOWED_NETWORKS = [x.strip() for x in env("ALLOWED_NETWORKS", "").split(",") if
 
 for d in (DATA_DIR, UPLOAD_DIR, BACKUP_DIR):
     d.mkdir(parents=True, exist_ok=True)
+
+# Hundreds of students = hundreds of open sockets plus database files. Services on Ubuntu start with a soft limit of
+# 1024 open files, which a 500-student round exceeds ("Too many open files", then the database cannot be opened).
+try:
+    import resource
+    _soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    _want = 65536 if _hard == resource.RLIM_INFINITY else min(_hard, 65536)
+    if _soft < _want:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (_want, _hard))
+except (ImportError, ValueError, OSError):
+    pass
+
