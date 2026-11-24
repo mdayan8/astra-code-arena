@@ -329,6 +329,14 @@ MIGRATIONS: list[str] = [
     """ALTER TABLE competitions ADD COLUMN lockdown TEXT NOT NULL DEFAULT '{}';""",
     # 8: multiple-choice options (JSON list of texts); the correct one is the expected text of the hidden test
     "ALTER TABLE question_versions ADD COLUMN options TEXT NOT NULL DEFAULT '[]'",
+    # 9: each student gets their own draw of the questions (pool), shuffled order; the draw is stored so it never changes
+    """ALTER TABLE competitions ADD COLUMN draw INTEGER NOT NULL DEFAULT 0;
+       ALTER TABLE competitions ADD COLUMN shuffle INTEGER NOT NULL DEFAULT 1;
+       ALTER TABLE competitions ADD COLUMN ai_pool INTEGER NOT NULL DEFAULT 0;
+       ALTER TABLE competitions ADD COLUMN ai_prompt TEXT NOT NULL DEFAULT '';
+       ALTER TABLE competitions ADD COLUMN results_at INTEGER;
+       CREATE INDEX IF NOT EXISTS ix_act_type ON activity_events(competition_id, type, user_id, created_at);
+       ALTER TABLE competition_participants ADD COLUMN questions TEXT;""",
 ]
 
 

@@ -11,3 +11,5 @@ ai-models.tgz
 *.db-shm
 .DS_Store
 .claude/
+watch/config.json
+watch/state.json

@@ -14,9 +14,9 @@ WORDNUM = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5
 ORD = {"1st": 1, "first": 1, "2nd": 2, "second": 2, "3rd": 3, "third": 3, "4th": 4, "fourth": 4, "final": 4}
 MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
 DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-TYPES = [("mcq", r"mcq|multiple.?choice|objective|choose the|aptitude|fundamental|theory|concept|logical|reasoning"), ("debug", r"debug|fix(?:ing)? (?:the )?bug|bug ?fix|find the bug|\bbugs?\b"), ("complete", r"complet|fill in|fill the|missing code"),
+TYPES = [("mcq", r"mcq|multiple.?choice|objective|choose the|aptitude|fundamental|theory|concept|logical|reasoning|quiz|puzzle"), ("debug", r"debug|fix(?:ing)? (?:the )?bug|bug ?fix|find the bug|\bbugs?\b"), ("complete", r"complet|fill in|fill the|missing code"),
          ("trace", r"trac|dry.?run"), ("output", r"output|predict"), ("prompt", r"prompt"),
-         ("standard", r"coding|code writing|standard|programming|write (?:a |the )?(?:program|code)|logic")]
+         ("standard", r"coding|code writing|standard|programming|write (?:a |the )?(?:program|code)|logic|\bdsa\b|algorithm")]
 TYPE_NAME = {"standard": "coding", "debug": "fix-the-bug", "complete": "complete-the-code", "output": "predict-the-output", "trace": "code-tracing", "prompt": "prompt", "mcq": "multiple-choice", None: ""}
 DIFFS = [("Easy", r"easy|simple|beginner|basic"), ("Intermediate", r"medium|intermediate|moderate"), ("Challenging", r"hard|challenging|difficult|tough|advanced|\bhigh\b")]
 LANGS = [("cpp", r"c\+\+|\bcpp\b"), ("python", r"\bpython\b"), ("javascript", r"javascript|\bjs\b|node"), ("java", r"\bjava\b(?!script)"), ("c", r"(?<![\w+])c(?![\w+#])")]
@@ -128,8 +128,23 @@ def parse(text, plan=None, departments=(), now=None):
     langs = [k for k, rx in LANGS if re.search(rx, t)]
     if langs:
         p["languages"] = sorted(set(langs), key=["c", "cpp", "python", "java", "javascript"].index)
+    if re.search(r"\b(?:start|starts|begin|starting) (?:it )?(?:right )?now\b|\bright now\b|immediately", t):
+        p["start_at"] = now.strftime("%Y-%m-%dT%H:%M")
+    if re.search(r"different (?:questions?|sets?|papers?)|unique (?:questions?|sets?)|own (?:set|questions)|randomi[sz]e|each student (?:gets|sees) (?:a )?different|no two students|shuffle (?:the )?questions", t) and not re.search(r"\bno\b[^.]{0,12}different|same questions? for (?:everyone|all)", t):
+        p["unique"] = True
+    elif re.search(r"same questions? for (?:everyone|all)|everyone (?:gets|sees) the same|no,? same", t):
+        p["unique"] = False
+    lvl = next((k for k, rx in DIFFS if re.search(rf"(?:^|\s)(?:{rx})(?: level)?(?:\s|$)", t)), None)
     qs = _questions(t)
+    if lvl and not qs and len(t.split()) <= 6:   # a short answer like "moderate": the level for every question asked so far
+        p["level"] = lvl
+        for q in p.get("questions", []):
+            q["difficulty"] = lvl
+    elif lvl and re.search(r"(?:all|every(?:thing|one)?|level|whole|overall)[^.]{0,20}" + "|".join(rx for _, rx in DIFFS).replace("|", "|"), t):
+        p["level"] = lvl
     if qs:
+        for q in qs:
+            q["difficulty"] = q["difficulty"] or p.get("level")
         p["questions"] = (p.get("questions", []) + qs) if re.search(r"\badd\b|\balso\b|\bmore\b|\bplus\b", t) and p.get("questions") else qs
     m = re.search(r"(\d+) marks? (?:each|per)", t)
     if m:
@@ -174,7 +189,9 @@ def pick(c, plan):
                       "WHERE cq.question_id=q.id AND co.status IN ('published','live','paused'))")
     random.shuffle(pool)
     chosen, short, missing = [], [], []
-    for s in plan.get("questions") or []:
+    mult = 3 if plan.get("unique") else 1
+    for s0 in plan.get("questions") or []:
+        s = {**s0, "count": s0["count"] * mult}
         words = [w for w in s.get("topic", "").split() if len(w) > 1]
 
         def ok(q, use_topic=True):
@@ -191,8 +208,11 @@ def pick(c, plan):
         chosen += got
         if len(got) < s["count"]:
             what = " ".join(x for x in [(s.get("difficulty") or "").lower(), TYPE_NAME[s.get("type")]] if x) or "matching"
-            short.append(f"The question bank has only {len(got)} of the {s['count']} {what} questions you asked for (approved, validated, in {', '.join(langs)}). "
+            short.append(f"The question bank has only {len(got)} of the {s['count']} {what} questions needed{' (3 per slot, so students get different ones)' if mult > 1 else ''} (approved, validated, in {', '.join(langs)}). "
                          "Add more in Question Bank or AI Studio, or change the request.")
+            if mult > 1 and len(got) >= s0["count"]:
+                short.pop()   # enough for everyone to get their questions; the pool is just smaller
+                continue
             missing.append({"count": s["count"] - len(got), "type": s.get("type"), "difficulty": s.get("difficulty"), "topic": s.get("topic") or ""})
     return chosen, short, missing
 
@@ -213,20 +233,31 @@ def describe(plan, chosen, short, now=None):
              f"auto-submit at {ld['max_violations']} warnings" if ld.get("max_violations") else "", "no copy" if ld.get("no_copy") else "", "no paste" if ld.get("no_paste") else ""]
     lines = [["Title", plan.get("title") or default_title(plan, now)], ["Duration", f"{plan.get('duration_min', 90)} minutes"], ["Starts", start], ["Who", who],
              ["Languages", ", ".join(plan.get("languages") or ["c", "python"])], ["Rules", " · ".join(r for r in rules if r)],
-             ["Results", {"hidden": "hidden until you publish", "after_end": "shown at the end"}.get(plan.get("leaderboard_visibility"), "live leaderboard")]]
-    todo = []
-    if not plan.get("questions"):
-        todo.append("Tell me the questions, for example: \"3 easy coding, 2 predict the output, 1 debug\".")
+             ["Questions", (f"each student gets {sum(q['count'] for q in plan.get('questions') or [])} of these {len(chosen)}, same kinds and level, own order"
+                            if plan.get("unique") else "same questions for everyone, each in their own order")],
+             ["Results", {"live": "live leaderboard", "after_end": "shown at the end"}.get(plan.get("leaderboard_visibility"), "private until you publish them")]]
+    todo, ask = [], []
+    qs = plan.get("questions") or []
+    if not qs:
+        ask.append({"q": "How many questions, and of which kinds?", "chips": ["5 mcq and 2 coding", "4 predict the output, 2 code tracing, 2 coding", "10 quiz questions", "3 DSA coding"]})
+    elif any(not q.get("difficulty") for q in qs) and not plan.get("level"):
+        ask.append({"q": "What level should it be? Everyone gets the same level.", "chips": ["easy", "moderate", "hard"]})
+    if qs and "unique" not in plan:
+        ask.append({"q": "Should each student get different questions (same kinds, same level), so neighbours cannot copy?", "chips": ["yes, different questions for each student", "no, same questions for everyone"]})
+    if "duration_min" not in plan:
+        ask.append({"q": "How long should it run?", "chips": ["30 minutes", "45 minutes", "60 minutes", "90 minutes"]})
     if not plan.get("start_at"):
-        todo.append("No start time yet. Say for example \"tomorrow at 10am\", or set it later in the competition.")
+        ask.append({"q": "When should it start?", "chips": ["start now", "tomorrow at 10am", "next monday 2pm"]})
     return {"lines": lines, "questions": [{"id": q["id"], "title": q["title"], "difficulty": q["difficulty"], "qtype": q["qtype"] or "standard", "category": q["category"]} for q in chosen],
-            "problems": short, "todo": todo, "ready": bool(chosen)}
+            "problems": short, "todo": todo, "ask": ask[:2], "ready": bool(chosen)}
 
 
 def default_title(plan, now):
     yrs = plan.get("eligible_years") or []
     who = {1: "First Year", 2: "Second Year", 3: "Third Year", 4: "Final Year"}.get(yrs[0], "") if len(yrs) == 1 else ""
-    lang = {"c": "C", "cpp": "C++", "python": "Python", "java": "Java", "javascript": "JavaScript"}.get((plan.get("languages") or [""])[0], "") if len(plan.get("languages") or []) == 1 else "Coding"
+    kinds = {q.get("type") for q in plan.get("questions") or []}
+    lang = ("Quiz" if kinds <= {"mcq", "output", "trace"} and kinds else
+            {"c": "C", "cpp": "C++", "python": "Python", "java": "Java", "javascript": "JavaScript"}.get((plan.get("languages") or [""])[0], "") if len(plan.get("languages") or []) == 1 else "Coding")
     day = datetime.datetime.fromisoformat(plan["start_at"]) if plan.get("start_at") else now
     return " ".join(x for x in [who, lang, "Round", day.strftime("%d %b")] if x)
 
@@ -250,6 +281,12 @@ if __name__ == "__main__":  # self-check
     assert parse("at 9am", {}, [], now)["start_at"] == "2026-11-21T09:00"      # 9am already passed today -> tomorrow
     assert parse("5 hard questions on arrays", {}, [], now)["questions"] == [{"count": 5, "type": None, "difficulty": "Challenging", "topic": "arrays"}]
     assert "questions" not in parse("for 2nd year students, 90 minutes", {}, [], now)
+    p3 = parse("quiz for 2nd years: 2 code tracing, 2 quiz, 2 dsa coding, moderate level, different questions for each student, start now", {}, [], now)
+    assert [q["type"] for q in p3["questions"]] == ["trace", "mcq", "standard"] and all(q["difficulty"] == "Intermediate" for q in p3["questions"]) and p3["unique"], p3
+    assert p3["start_at"] == "2026-11-20T15:00"
+    p4 = parse("hard", {"questions": [{"count": 2, "type": "mcq", "difficulty": None, "topic": ""}]}, [], now)
+    assert p4["questions"][0]["difficulty"] == "Challenging" and p4["level"] == "Challenging", p4
+    assert parse("no, same questions for everyone", {"unique": True}, [], now)["unique"] is False
     assert parse("5 logical thinking questions", {}, [], now)["questions"] == [{"count": 5, "type": "mcq", "difficulty": None, "topic": "logical"}]
     assert parse("10 moderate mcq on pointers and 2 high coding", {}, [], now)["questions"] == [
         {"count": 10, "type": "mcq", "difficulty": "Intermediate", "topic": "pointers"}, {"count": 2, "type": "standard", "difficulty": "Challenging", "topic": ""}]

@@ -27,9 +27,11 @@ async function api(method, url, body, opts = {}) {
 }
 const GET = (u) => api('GET', u), POST = (u, b = {}) => api('POST', u, b), PUT = (u, b) => api('PUT', u, b), DEL = (u) => api('DELETE', u);
 
+const layer = () => document.fullscreenElement || document.body;   // in full screen only the full-screen element is visible
 function toast(msg, type = '') {
   let box = $('#toasts');
-  if (!box) { box = document.createElement('div'); box.id = 'toasts'; box.setAttribute('role', 'status'); document.body.appendChild(box); }
+  if (!box) { box = document.createElement('div'); box.id = 'toasts'; box.setAttribute('role', 'status'); }
+  if (box.parentNode !== layer()) layer().appendChild(box);
   const t = document.createElement('div');
   t.className = `toast ${type}`; t.textContent = msg;
   box.appendChild(t);
@@ -57,7 +59,7 @@ function modal({ title, body = '', actions = [], size = '', onOpen, dismissable 
       finally { if (b.isConnected) { b.disabled = false; b.innerHTML = old; } }
     };
   });
-  document.body.appendChild(ov);
+  layer().appendChild(ov);
   const f = $('input, textarea, select', $('.mb', ov)); if (f) setTimeout(() => f.focus(), 30);
   if (onOpen) onOpen(ov, close);
   return { el: ov, close };

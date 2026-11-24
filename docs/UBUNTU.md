@@ -301,3 +301,19 @@ Run **Diagnose & fix** in the control panel (or `astra-arena doctor`) first. It 
 
 **Light and dark.** The control app has an Auto / Light / Dark switch at the top. It changes only the control app, not the student or organiser sites (those have their own switch).
 
+
+## 13. Fair rounds, results, reviews and remote alerts
+
+**Each student their own questions.** In a competition's *Questions & scoring* step, set *Questions per student* (for example 5) and add more questions than that (for example 15). Every student gets their own 5, with exactly the same mix of question kinds and difficulty as everyone else, in their own order; multiple-choice options are shuffled too. The set is fixed the first time a student opens the round, so a reload never changes it. With *Let the AI add checked variants* on (the default), the AI adds one variant for every 4 registrations before the start, at most 15, and only ones whose answer the server proved by running code. *What should the AI write* stores your instructions for those variants.
+
+**Describe a round in the chat.** On the Competitions page, type what you want, for example `quiz for 2nd years: 2 code tracing, 2 quiz, 2 DSA coding, moderate level, different questions for each student, start now`. If something is missing (how many, what level, same or different questions, how long, when), the assistant asks, with one-click answers.
+
+**Instant test round.** *Instant test round* on the Competitions page picks questions, publishes and starts a round right now, so you can try everything from a student account in a minute.
+
+**Scoring is the same for everyone.** Higher score first; equal scores are separated by penalty time (time taken + wrong attempts), then by who reached the score first, then who finished first. Names never decide a rank. Each fair-play warning (leaving the test, leaving full screen, internet on) costs a set percentage of the student's maximum marks (default 5%); the leaderboard shows warnings and deductions. A continuous internet connection counts once every 5 minutes, not on every reload.
+
+**Results.** By default results stay private until you release them: on the competition page, *Results* → *Publish now* (after the end) or *Schedule release* for a set time. Students then see their rank and, from their home page, a *Review* of the round: every question they got, their answer, the correct answer for multiple-choice and written questions, and plain-language reasons for a failure (for example "your output contains the right answer plus extra text: remove the input prompt"). Hidden test data is never shown.
+
+**If a PC or the network fails during a round.** Student code is saved every 30 seconds. After pausing or ending the round, *Saved work* → *Grade saved answers* judges each student's last saved answer that they had not submitted. You can also reopen a student's test from the Participants tab.
+
+**Remote alerts (optional, separate from the platform).** `watch/` is a small separate tool that sends phone alerts for errors, a stuck judge, the server going down and round start/end, plus a private status page you can open from anywhere. It only reads the database and never changes the platform. To install it on the server PC: `sudo bash watch/install.sh`, then subscribe to the link it prints in the ntfy app. Details in `watch/README.md`. No student names leave the computer.

@@ -15,7 +15,7 @@ async function boot() {
     ['/', landing], ['/login', loginPage], ['/register', registerPage], ['/dashboard', authed(() => nav('/profile'))], ['/home', authed(profilePage)], ['/competitions', competitionsPage],
     ['/c/:code', compDetail], ['/arena/:id', authed((p) => workspace({ mode: 'contest', compId: Number(p.id), q: p.query.q }))],
     ['/practice', authed(practicePage)], ['/practice/:qid', authed((p) => workspace({ mode: 'practice', qid: Number(p.qid) }))],
-    ['/leaderboard/:id', leaderboardPage], ['/semester', semesterPage], ['/semester/:id', semesterPage], ['/profile', authed(profilePage)], ['/rules', rulesPage],
+    ['/leaderboard/:id', leaderboardPage], ['/review/:id', authed(reviewPage)], ['/semester', semesterPage], ['/semester/:id', semesterPage], ['/profile', authed(profilePage)], ['/rules', rulesPage],
   ], () => { shell(''); app.innerHTML = `<div class="container page">${empty('Page not found', '<a href="#/">Go home</a>')}</div>`; });
   go();
 }
@@ -201,7 +201,15 @@ async function dashboard() {
   app.innerHTML = `<div class="container page">${skeleton(5)}</div>`;
   const [d, gx] = await Promise.all([GET('/api/student/dashboard'), GET('/api/student/stats')]);
   const st = d.stats;
-  app.innerHTML = `<div class="container page stack loose">
+  window.__badges = gx.badges;
+  const now = Date.now() / 1000;
+  const mine = [...d.active, ...d.upcoming.filter((x) => x.start_at && x.start_at - now < 3 * 86400)].filter((x) => x.for_me !== false && !x.disqualified);
+  const banner = mine.length ? `<section class="livebanner ${d.active.some((x) => mine.includes(x)) ? 'live' : ''}">${mine.slice(0, 2).map((x) => { const live = ['Live', 'Paused'].includes(x.display_status);
+    return `<div class="lb-row"><span class="lb-dot"></span><div class="grow"><div class="tiny">${live ? 'Happening now' : 'Coming up'} · for ${x.eligible_years.length ? 'Year ' + x.eligible_years.join(', ') : 'all years'}</div>
+      <b>${esc(x.title)}</b><div class="small">${live ? `${fmtDur(x.remaining_sec)} left · ${x.question_count} questions` : `Starts ${fmtTime(x.start_at)} · ${fmtMins(x.duration_min)}`}${x.joined ? ' · you are registered' : ''}</div></div>
+      ${x.joined ? (live ? `<a class="btn lg" href="#/arena/${x.id}">Enter now ${ico('right', 14)}</a>` : `<a class="btn lg" href="#/c/${encodeURIComponent(x.code)}">Details</a>`)
+        : x.can_join ? `<button class="btn lg" data-join="${x.id}">Register ${ico('right', 14)}</button>` : `<span class="small">${esc(x.join_reason)}</span>`}</div>`; }).join('')}</section>` : '';
+  app.innerHTML = `<div class="container page stack loose">${banner}
     <div class="row between wrap"><div><h1 style="margin:0">Welcome back, ${esc(d.me.name.split(' ')[0])}</h1><div class="muted">Participant ID <b class="mono">${esc(d.me.participant_id)}</b> · ${esc(d.me.department)} · Year ${esc(d.me.year)}</div></div>
       <div class="row"><a class="btn" href="#/practice">Practice</a><a class="btn primary" href="#/competitions">Browse competitions</a></div></div>
     <div class="grid g4"><div class="card stat"><div class="k">Semester points</div><div class="v">${d.semester ? d.semester.points : 0}</div><div class="s">${d.semester ? esc(d.semester.name) : 'No active semester'}</div></div>
@@ -290,13 +298,13 @@ async function leaderboardPage(p) {
     app.innerHTML = `<div class="container page"><a class="small" href="#/c/${encodeURIComponent(c.code)}">${ico('left')} ${esc(c.title)}</a>
       <div class="row between wrap" style="margin:8px 0 16px"><div><h1 style="margin:0">${d.frozen ? 'Final results' : 'Leaderboard'}</h1><div class="row small muted">${badge(c.display_status)}${c.remaining_sec != null ? `<span class="mono">${fmtDur(c.remaining_sec)} remaining</span><span>Updates automatically</span>` : ''}</div></div></div>
       ${d.rows.length ? `<div class="card pad podium-card">${podium(d.rows.slice(0, 3).map((r) => ({ ...r, points: r.score })), 'marks')}</div>` : ''}
-      <div class="card"><div class="table-wrap"><table class="table"><thead><tr><th>Rank</th><th>Participant</th><th class="num">Score</th><th class="num">Solved</th>${d.tie_break === 'penalty' ? '<th class="num" title="Tie-break penalty minutes">Penalty</th>' : ''}
+      <div class="card"><div class="table-wrap"><table class="table"><thead><tr><th>Rank</th><th>Participant</th><th class="num">Score</th><th class="num">Solved</th>${d.tie_break === 'penalty' ? '<th class="num" title="Tie-break penalty minutes">Penalty</th>' : ''}${d.rows.some((r) => r.warnings) ? '<th class="num" title="Fair-play warnings and the marks deducted for them">Warnings</th>' : ''}
         ${d.questions.map((q) => `<th class="num" title="${esc(q.title)}">${q.label}<div class="tiny faint">${q.marks}</div></th>`).join('')}</tr></thead><tbody>
         ${d.rows.length ? d.rows.map((r) => `<tr class="${r.me ? 'me' : ''}"><td>${rankBadge(r.rank)}</td><td><div class="row">${avatar(r.name, 'sm', r.avatar)}<div><b>${esc(r.name)}</b>${r.me ? ' <span class="badge violet">You</span>' : ''}<div class="tiny muted">${esc(r.department || '')}</div></div></div></td>
-          <td class="num"><b>${r.score}</b></td><td class="num">${r.solved}</td>${d.tie_break === 'penalty' ? `<td class="num muted">${r.penalty}</td>` : ''}
+          <td class="num"><b>${r.score}</b></td><td class="num">${r.solved}</td>${d.tie_break === 'penalty' ? `<td class="num muted">${r.penalty}</td>` : ''}${d.rows.some((x) => x.warnings) ? `<td class="num">${r.warnings ? `<span style="color:var(--red)">${r.warnings}</span><div class="tiny faint">−${r.deducted}</div>` : '<span class="faint">0</span>'}</td>` : ''}
           ${d.questions.map((q) => { const x = r.per[q.id]; return `<td class="num">${x ? `<span style="color:${x.ac ? 'var(--green)' : x.score > 0 ? 'var(--amber)' : 'var(--red)'};font-weight:650">${x.score}</span><div class="tiny faint">${x.tries} try</div>` : '<span class="faint">·</span>'}</td>`; }).join('')}</tr>`).join('')
           : `<tr><td colspan="${5 + d.questions.length}">${empty('No scores yet')}</td></tr>`}</tbody></table></div></div>
-      <p class="small muted" style="margin-top:10px">${d.tie_break === 'penalty' ? `Tie-break: lower penalty wins (minutes to each scoring submission + ${d.penalty_minutes} min per earlier wrong attempt).` : 'Tie-break: earliest time to reach the score wins.'}</p></div>`;
+      <p class="small muted" style="margin-top:10px">${d.tie_break === 'penalty' ? `Equal scores: lower penalty wins (minutes to each scoring submission + ${d.penalty_minutes} min per earlier wrong attempt), then whoever reached the score first, then whoever finished first.` : 'Equal scores: whoever reached the score first wins, then whoever finished first.'}${d.violation_pct ? ` Each fair-play warning costs ${d.violation_pct}% of the marks.` : ''} The same rule applies to everyone.</p></div>`;
     return c.display_status === 'Live' || c.display_status === 'Paused';
   };
   if (await load()) { const t = setInterval(load, 15000); onLeave(() => clearInterval(t)); }
@@ -305,10 +313,20 @@ async function leaderboardPage(p) {
 async function semesterPage(p) {
   shell('semester');
   const sems = await GET('/api/semesters');
-  if (!sems.length) { app.innerHTML = `<div class="container page"><h1>Semester leaderboard</h1><div class="card">${empty('No semester leaderboard yet', 'It appears once organisers set up the semester.')}</div></div>`; return; }
+  const tabs = (on) => `<div class="tabs" style="margin-bottom:16px"><a class="${on === 'all' ? 'on' : ''}" href="#/semester/overall">Overall</a><a class="${on === 'sem' ? 'on' : ''}" href="#/semester${sems.length ? '/' + sems[0].id : ''}">Semester</a></div>`;
+  if (p.id === 'overall' || !sems.length) {
+    const o = await GET('/api/leaderboard/overall');
+    app.innerHTML = `<div class="container page">${tabs('all')}<div style="margin-bottom:16px"><h1 style="margin:0">Overall leaderboard</h1><div class="muted">Every completed round counts the same: your score in it out of 100. ${o.rounds} round(s) so far.</div></div>
+      ${o.rows.length ? `<div class="card pad podium-card" style="margin-bottom:18px">${podium(o.rows.slice(0, 3))}</div>` : ''}
+      <div class="card"><div class="table-wrap"><table class="table"><thead><tr><th>Rank</th><th>Participant</th><th class="num">Points</th><th class="num">Rounds</th><th class="num">Wins</th><th class="num">Solved</th></tr></thead><tbody>
+      ${o.rows.length ? o.rows.map((r) => `<tr class="${r.me ? 'me' : ''}"><td>${rankBadge(r.rank)}</td><td><div class="row">${avatar(r.name, 'sm', r.avatar)}<div><b>${esc(r.name)}</b>${r.me ? ' <span class="badge violet">You</span>' : ''}<div class="tiny muted">${esc(r.department || '')}${r.year ? ' · Year ' + r.year : ''}</div></div></div></td>
+        <td class="num"><b>${r.points}</b></td><td class="num">${r.played}</td><td class="num">${r.wins}</td><td class="num">${r.solved}</td></tr>`).join('') : `<tr><td colspan="6">${empty('No results yet', 'Points appear when a round ends and its results are published.')}</td></tr>`}</tbody></table></div></div>
+      <p class="small muted" style="margin-top:10px">Ties are broken by problems solved, then rounds won.</p></div>`;
+    return;
+  }
   const sid = p.id || sems[0].id;
   const d = await GET(`/api/semesters/${sid}/leaderboard`);
-  app.innerHTML = `<div class="container page"><div class="row between wrap" style="margin-bottom:16px"><div><h1 style="margin:0">Semester leaderboard</h1><div class="muted">${esc(d.semester.academic_year)} ${esc(d.semester.term)} · ${d.semester.status === 'active' ? 'Live totals' : esc(d.semester.status)}</div></div>
+  app.innerHTML = `<div class="container page">${tabs('sem')}<div class="row between wrap" style="margin-bottom:16px"><div><h1 style="margin:0">Semester leaderboard</h1><div class="muted">${esc(d.semester.academic_year)} ${esc(d.semester.term)} · ${d.semester.status === 'active' ? 'Live totals' : esc(d.semester.status)}</div></div>
     <div class="row"><select class="select" id="semSel" style="width:auto">${sems.map((s) => `<option value="${s.id}" ${s.id == sid ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select>
     <a class="btn" href="#" id="yearBtn">Academic year view</a></div></div>
     ${d.rows.length ? `<div class="card pad podium-card" style="margin-bottom:18px">${podium(d.rows.slice(0, 3))}</div>` : ''}
@@ -322,6 +340,33 @@ async function semesterPage(p) {
     const y = await GET(`/api/academic-years/${encodeURIComponent(d.semester.academic_year)}/leaderboard`);
     modal({ title: `Academic year ${y.academic_year}`, size: 'wide', body: y.rows.length ? `<table class="table"><thead><tr><th>Rank</th><th>Name</th><th class="num">Points</th><th class="num">Solved</th></tr></thead><tbody>${y.rows.map((r) => `<tr class="${r.me ? 'me' : ''}"><td>${rankBadge(r.rank)}</td><td>${esc(r.name)}</td><td class="num"><b>${r.points}</b></td><td class="num">${r.solved}</td></tr>`).join('')}</tbody></table>` : empty('No data yet') });
   };
+}
+
+// ---------------- after a round: what went wrong and how to improve ----------------
+async function reviewPage(p) {
+  shell('profile');
+  app.innerHTML = `<div class="container page">${skeleton(5)}</div>`;
+  let d;
+  try { d = await GET(`/api/student/competitions/${p.id}/review`); } catch (e) { app.innerHTML = `<div class="container page"><div class="card">${empty(e.message, '<a href="#/profile">Back</a>')}</div></div>`; return; }
+  const TY = { standard: 'Coding', debug: 'Fix the bug', complete: 'Complete the code', output: 'Predict the output', trace: 'Code tracing', mcq: 'Multiple choice', prompt: 'Prompt' };
+  const r = d.result;
+  app.innerHTML = `<div class="container page" style="max-width:900px"><a class="small" href="#/profile">${ico('left')} Home</a>
+    <div class="row between wrap" style="margin:8px 0 16px"><div><h1 style="margin:0">Your review</h1><div class="muted">${esc(d.competition.title)}</div></div>
+      ${r ? `<div class="row" style="gap:8px"><span class="chip">Rank&nbsp;<b>#${r.rank}</b>&nbsp;of&nbsp;${r.of}</span><span class="chip">Score&nbsp;<b>${r.score}</b></span>${r.warnings ? `<span class="chip" style="color:var(--red)">${r.warnings}&nbsp;warning(s)&nbsp;·&nbsp;−${r.deducted}</span>` : ''}</div>` : ''}</div>
+    <div class="row wrap small muted" style="gap:14px;margin-bottom:14px"><span>${ico('check', 14)} ${d.questions.filter((q) => q.solved).length} solved</span><span>${ico('alert', 14)} ${d.questions.filter((q) => q.attempts && !q.solved).length} tried, not solved</span><span>${ico('circle', 14)} ${d.questions.filter((q) => !q.attempts).length} not attempted</span></div>
+    <div class="stack">${d.questions.map((q) => `<details class="card rv ${q.solved ? 'ok' : q.attempts ? 'bad' : 'none'}" ${q.solved ? '' : 'open'}><summary><span class="rvl">${q.label}</span><div class="grow"><b>${esc(q.title)}</b><div class="tiny muted">${TY[q.qtype] || ''} · ${q.attempts} attempt(s) · ${q.best}/${q.marks} marks</div></div>
+        <span class="badge ${q.solved ? 'green' : q.attempts ? 'red' : ''}">${q.solved ? 'Solved' : q.attempts ? esc(q.verdict_name || 'Not solved') : 'Not attempted'}</span></summary>
+      <div class="rvb"><div class="prose small">${md(q.statement)}</div>
+        ${q.options.length ? `<div class="mcq">${q.options.map((o, i) => `<div class="opt ${o.trim() === (q.correct_answer || '').trim() ? 'on' : ''} ${o.trim() === (q.your_answer || '').trim() && o.trim() !== (q.correct_answer || '').trim() ? 'wrong' : ''}"><span class="k">${'ABCDEF'[i]}</span><pre>${esc(o)}</pre>${o.trim() === (q.correct_answer || '').trim() ? '<span class="tiny" style="color:var(--green);font-weight:650">correct</span>' : o.trim() === (q.your_answer || '').trim() ? '<span class="tiny" style="color:var(--red);font-weight:650">your answer</span>' : ''}</div>`).join('')}</div>` : ''}
+        ${!q.options.length && q.correct_answer != null ? `<div class="io"><div><div class="lbl">Your answer</div><pre>${esc(q.your_answer ?? '—')}</pre></div><div><div class="lbl">Correct answer</div><pre>${esc(q.correct_answer)}</pre></div></div>` : ''}
+        ${q.why ? `<div class="notice warn small" style="margin-top:10px"><b>Why it did not pass:</b> ${esc(q.why)}</div>` : ''}
+        ${q.reasons?.length ? `<div class="notice info small" style="margin-top:8px"><b>What we found</b><ul style="margin:4px 0 0;padding-left:18px">${q.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
+        ${q.failed_example ? `<div class="io" style="margin-top:10px"><div><div class="lbl">Example input</div><pre>${esc(q.failed_example.input)}</pre></div><div><div class="lbl">Expected</div><pre>${esc(q.failed_example.expected)}</pre></div><div><div class="lbl">Your program printed</div><pre>${esc(q.failed_example.output || '')}</pre></div></div>` : ''}
+        ${q.compiler ? `<div class="lbl" style="margin-top:10px">Compiler message</div><pre class="small">${esc(q.compiler)}</pre>` : ''}
+        ${q.tip ? `<div class="notice info small" style="margin-top:10px"><b>How to improve:</b> ${esc(q.tip)}</div>` : ''}
+        ${q.your_code ? `<details style="margin-top:10px"><summary class="small muted">Your last code (${langName(q.language)})</summary><pre class="small">${esc(q.your_code)}</pre></details>` : ''}
+        ${!q.attempts ? '<div class="small muted">You did not attempt this one. Similar questions are in Practice.</div>' : ''}</div></details>`).join('')}</div>
+    <div class="row" style="margin-top:16px"><a class="btn" href="#/leaderboard/${d.competition.id}">Leaderboard</a><a class="btn primary" href="#/practice">Practise similar questions</a></div></div>${footer()}`;
 }
 
 // ---------------- practice / profile / rules ----------------
@@ -383,9 +428,9 @@ const BADGE_COLORS = { // ring light, ring mid, ring dark, extrusion, face top, 
   default: ['#f5f3ff', '#a78bfa', '#6d28d9', '#3b0764', '#8b5cf6', '#4c1d95'] };
 const hexBadge = (b, small) => {
   const id = `hb${++_bid}`, on = b.earned;
-  const pal = BADGE_COLORS[b.key] || BADGE_COLORS.default;
+  const pal = BADGE_COLORS[{ solver: 'solver10', practice: 'solver25', streak: 'streak7', rounds: 'debut', fair: 'veteran', reader: 'speed' }[b.key] || b.key] || BADGE_COLORS.default;
   const c = on ? pal : ['#f8fafc', '#cbd5e1', '#94a3b8', '#475569', '#cbd5e1', '#94a3b8'];
-  return `<div class="hexb ${on ? 'on' : ''} ${small ? 'small' : ''}" title="${esc(b.name)}: ${esc(b.description)}${on ? ' (earned)' : ' (locked)'}">
+  return `<div class="hexb ${on ? 'on' : ''} ${small ? 'small' : ''}" data-badge="${esc(b.key)}" role="button" tabindex="0" title="${esc(b.name)}${b.tier ? ' · ' + b.tier : ''}: ${esc(b.description)}">
   <svg viewBox="0 0 100 116" aria-hidden="true"><defs>
     <linearGradient id="${id}r" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${c[0]}"/><stop offset=".45" stop-color="${c[1]}"/><stop offset="1" stop-color="${c[2]}"/></linearGradient>
     <linearGradient id="${id}f" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${c[4]}"/><stop offset="1" stop-color="${c[5]}"/></linearGradient>
@@ -394,10 +439,20 @@ const hexBadge = (b, small) => {
     <path d="M50 4l42 24v54L50 106 8 82V28z" fill="url(#${id}r)"/>
     <path d="M50 14l33 19v42L50 94 17 75V33z" fill="url(#${id}f)" stroke="rgba(0,0,0,.18)" stroke-width="1.5"/>
     <path d="M50 14l33 19v12C66 36 34 36 17 45V33z" fill="url(#${id}g)"/>
-    <g transform="translate(32 36) scale(1.5)" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" ${on ? '' : 'opacity=".75"'}><path d="${BADGE_ICON[b.icon]}"/></g>
+    <g transform="translate(32 36) scale(1.5)" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" ${on ? '' : 'opacity=".75"'}><path d="${BADGE_ICON[b.icon] || ICONS[b.icon] || ICONS.star}"/></g>
     ${on ? '' : `<g transform="translate(64 74)"><circle r="11" cx="11" cy="11" fill="#475569" stroke="#fff" stroke-width="2"/><g transform="translate(5 4.5) scale(.5)" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"><path d="${ICONS.lock}"/></g></g>`}
-  </svg>${small ? '' : `<span>${esc(b.name)}</span>`}</div>`;
+  </svg>${small ? '' : `<span>${esc(b.name)}${b.tier ? `<small>${b.tier}</small>` : ''}</span>`}</div>`;
 };
+const TIER_NAMES = ['Bronze', 'Silver', 'Gold', 'Platinum'];
+function badgeInfo(b) {
+  const pct = b.next ? Math.min(100, Math.round(b.value / b.next * 100)) : 100;
+  modal({ title: b.name, body: `<div class="row" style="gap:16px;align-items:center">${hexBadge(b, true)}<div class="grow"><div class="small muted">${b.earned ? (b.tier ? `${b.tier} level` : 'Earned') : 'Locked'}</div>
+      <b>${b.next ? `${b.value} of ${b.next} ${esc(b.what)}` : `${b.value} ${esc(b.what)}`}</b><div class="bar" style="margin-top:8px"><i style="width:${pct}%"></i></div></div></div>
+    <div class="small muted" style="margin:14px 0 6px">How to earn it</div>
+    <div class="stack tight">${b.targets.map((t, i) => `<div class="row between tierrow ${b.value >= t ? 'done' : ''}"><span>${b.targets.length > 1 ? TIER_NAMES[i] : 'Badge'}</span><span>${t} ${esc(b.what)}</span><span>${b.value >= t ? ico('check', 14) : ico('lock', 13)}</span></div>`).join('')}</div>`,
+    actions: [{ label: 'Close', kind: 'primary' }] });
+}
+document.addEventListener('click', (e) => { const el = e.target.closest?.('[data-badge]'); if (!el || el.closest('.modal')) return; const b = (window.__badges || []).find((x) => x.key === el.dataset.badge); if (b) badgeInfo(b); });
 function heatmap(h) {
   const days = [], today = new Date(); const start = new Date(today); start.setDate(start.getDate() - 7 * 22 + 1 - start.getDay());
   for (let d = new Date(start); d <= today; d.setDate(d.getDate() + 1)) days.push(new Date(d));
@@ -441,6 +496,7 @@ async function profilePage(p) {
   app.innerHTML = `<div class="container page">${skeleton(6)}</div>`;
   const [d, st, hist, comps] = await Promise.all([GET('/api/student/profile'), GET('/api/student/stats'), GET('/api/student/history'), GET('/api/public/competitions')]);
   const m = d.me, sem = st.semester, earned = st.badges.filter((b) => b.earned);
+  window.__badges = st.badges;
   const lv = levelOf(xpOf(st));
   const live = comps.find((c) => c.joined && ['Live', 'Paused'].includes(c.display_status));
   const open = !live && comps.find((c) => c.can_join);
@@ -464,16 +520,16 @@ async function profilePage(p) {
         <div class="grid g4">${[['medal', 'Rank', sem?.rank ? '#' + sem.rank : '—', sem ? `of ${sem.of} this semester` : 'no semester yet'], ['star', 'Points', sem ? sem.points : 0, sem?.percentile != null ? `top ${Math.max(1, Math.round(100 - sem.percentile + 1))}%` : 'play a round'],
           ['check2', 'Solved', st.solved, `${st.accepted}/${st.submissions} accepted`], ['flame', 'Streak', st.streak, `days · best ${st.longest_streak}`]].map(([i, k, v, x]) => `<div class="card stat tile"><span class="lsi">${ico(i, 18)}</span><div><div class="k">${k}</div><div class="v">${v}</div><div class="s">${x}</div></div></div>`).join('')}</div>
         <div class="grid g2" style="align-items:stretch"><section class="card pad"><div class="row between"><h3 style="margin:0">Achievements</h3><span class="small muted">${earned.length}/${st.badges.length}</span></div>
-          <div class="badges">${st.badges.map((b) => hexBadge(b)).join('')}</div><div class="tiny muted">Hover a badge to see how to earn it.</div></section>
+          <div class="badges">${st.badges.map((b) => hexBadge(b)).join('')}</div><div class="tiny muted">Click any badge to see exactly what earns it and how close you are.</div></section>
           <section class="card pad"><div class="row between"><h3 style="margin:0">Activity</h3><span class="small row" style="gap:4px">${ico('flame', 14)} <b>${st.streak}</b> day streak</span></div><div style="margin-top:14px">${heatmap(st.heatmap)}</div>
           <div class="grid g3" style="margin-top:14px;gap:8px">${diff.map(([k, c]) => `<div class="mini"><span class="badge ${c}" style="height:18px">${k}</span><b>${st.solved_by_difficulty[k]}<small class="muted" style="font-size:12px;font-weight:500"> / ${st.totals_by_difficulty[k]}</small></b></div>`).join('')}</div></section></div>
         <section class="card pad" id="insights"><div class="skel" style="height:120px"></div></section>
       </div></div>
     <section class="card"><div class="card-head"><h3 class="row" style="gap:8px">${ico('code', 17)} My problems</h3><div class="seg" id="pf">${[['all', 'All'], ['solved', 'Solved'], ['trying', 'In progress']].map(([k, l], i) => `<button data-f="${k}" class="${i ? '' : 'on'}">${l}</button>`).join('')}</div></div><div id="plist"></div></section>
     <section class="card"><div class="card-head"><h3 class="row" style="gap:8px">${ico('trophy', 17)} Competition history</h3><span class="small muted">${d.practice_solved} practice problems solved</span></div>
-      ${d.history.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Competition</th><th>Status</th><th class="num">Rank</th><th class="num">Score</th><th class="num">Solved</th></tr></thead><tbody>
-      ${d.history.map((h) => `<tr class="click" onclick="nav('/leaderboard/${h.id}')"><td><b>${esc(h.title)}</b><div class="tiny muted mono">${esc(h.code)} · ${fmtDate(h.start_at)}</div></td><td>${badge(h.display_status)}</td>
-        <td class="num">${h.rank ? `${rankBadge(h.rank)}<span class="faint"> / ${h.of}</span>` : h.results_pending ? '<span class="badge amber">results pending</span>' : h.finished ? '<span class="badge blue">submitted</span>' : '—'}</td><td class="num"><b>${h.score ?? '—'}</b></td><td class="num">${h.solved ?? '—'}</td></tr>`).join('')}</tbody></table></div>` : empty('No competitions yet', 'Join a round from Competitions.')}</section>
+      ${d.history.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Competition</th><th>Status</th><th class="num">Rank</th><th class="num">Score</th><th class="num">Solved</th><th></th></tr></thead><tbody>
+      ${d.history.map((h) => `<tr class="click" onclick="nav('/${['Completed'].includes(h.display_status) ? 'review' : 'leaderboard'}/${h.id}')"><td><b>${esc(h.title)}</b><div class="tiny muted mono">${esc(h.code)} · ${fmtDate(h.start_at)}</div></td><td>${badge(h.display_status)}</td>
+        <td class="num">${h.rank ? `${rankBadge(h.rank)}<span class="faint"> / ${h.of}</span>` : h.results_pending ? '<span class="badge amber">results pending</span>' : h.finished ? '<span class="badge blue">submitted</span>' : '—'}</td><td class="num"><b>${h.score ?? '—'}</b></td><td class="num">${h.solved ?? '—'}</td><td class="right">${h.display_status === 'Completed' ? `<a class="btn xs" href="#/review/${h.id}" onclick="event.stopPropagation()">Review</a>` : ''}</td></tr>`).join('')}</tbody></table></div>` : empty('No competitions yet', 'Join a round from Competitions.')}</section>
   </div>${footer()}`;
   // my problems
   const drawP = (f) => {
@@ -523,7 +579,7 @@ async function profilePage(p) {
   const seenRes = seen(key + ':results') || [];
   const fresh = hist.results.find((r) => !seenRes.includes(r.id));
   const seenBadges = seen(key + ':badges');
-  const newBadges = earned.filter((b) => seenBadges && !seenBadges.includes(b.key));
+  const newBadges = earned.filter((b) => seenBadges && !seenBadges.includes(`${b.key}:${b.level}`));
   const lastLevel = seen(key + ':level');
   if (fresh) {
     save(key + ':results', [...seenRes, ...hist.results.map((r) => r.id)]);
@@ -531,11 +587,11 @@ async function profilePage(p) {
     celebrate({ icon: top ? 'crown' : 'trophy', tone: top ? 'gold' : 'violet', title: `Results are out: you ranked #${fresh.rank}`, text: `${esc(fresh.title)} · ${fresh.score} / ${fresh.max} marks · ${fresh.of} participants${top ? '. Podium finish!' : '. Keep climbing!'}`,
       action: { label: 'See leaderboard', onClick: () => nav('/leaderboard/' + fresh.id) } });
   } else if (newBadges.length) {
-    celebrate({ icon: 'award', tone: 'gold', title: newBadges.length > 1 ? `${newBadges.length} new badges unlocked!` : `Badge unlocked: ${newBadges[0].name}`, text: newBadges.map((b) => `<b>${esc(b.name)}</b>: ${esc(b.description)}`).join('<br>') });
+    celebrate({ icon: 'award', tone: 'gold', title: newBadges.length > 1 ? `${newBadges.length} new badges unlocked!` : `Badge unlocked: ${newBadges[0].name}`, text: newBadges.map((b) => `<b>${esc(b.name)}${b.tier ? ' · ' + b.tier : ''}</b>`).join('<br>') });
   } else if (lastLevel && lv.level > lastLevel) {
     celebrate({ icon: 'star', tone: 'sky', title: `Level up! You are now level ${lv.level}`, text: `${esc(lv.name)} · ${lv.xp} XP` });
   }
-  save(key + ':badges', earned.map((b) => b.key));
+  save(key + ':badges', earned.map((b) => `${b.key}:${b.level}`));
   save(key + ':level', lv.level);
 }
 
@@ -630,14 +686,16 @@ async function workspace({ mode, compId, qid, q: startQ }) {
     if (!html) return o?.remove();
     if (!o) { o = document.createElement('div'); o.id = 'ldlock'; o.className = 'wsmsg'; o.style.position = 'fixed'; o.style.zIndex = '95'; ws.appendChild(o); }
     o.innerHTML = `<div class="card pad center" style="max-width:460px">${html}</div>`;
-    $('[data-ld=fs]', o)?.addEventListener('click', () => ws.requestFullscreen?.().catch(() => toast('Allow full screen to continue', 'err')));
+    $('[data-ld=fs]', o)?.addEventListener('click', () => (ws.requestFullscreen ? ws.requestFullscreen() : Promise.reject()).catch(() => {
+      // never lock a student out: if this browser refuses full screen, continue in a normal window and tell the organisers
+      track('fullscreen_unavailable', null); flush(); why.fs = null; lockDraw(); toast('This browser does not allow full screen. You can continue; the organisers are informed.', 'err'); }));
     $('[data-ld=ok]', o)?.addEventListener('click', () => { why.away = null; lockDraw(); if (LD.fullscreen === 'required' && !document.fullscreenElement) ws.requestFullscreen?.().catch(() => {}); });
   };
   const warnLine = () => LD.max_violations ? `<p class="small" style="color:var(--red)"><b>Warning ${warnings} of ${LD.max_violations}.</b> At ${LD.max_violations} your test is submitted automatically.</p>` : '<p class="small muted">This is recorded for the organisers.</p>';
   const warn = (kind) => { if (!contest || isOver() || Date.now() - lastWarn < 3000) return false; lastWarn = Date.now(); warnings++; track('violation', { kind, n: warnings }); flush(); return true; };
   const autoSubmitted = (j) => { if (isOver()) return; ended = true; try { finished = true; } catch (e) { /* not declared yet */ } why.net = why.fs = why.away = null; lockDraw();
     $('#subBtn').disabled = true; $('#finishBtn')?.remove(); document.fullscreenElement && document.exitFullscreen?.();
-    overlay(`<div class="emptyi" style="background:var(--red-soft);color:var(--red)">${ico('alert', 28)}</div><h3>Test submitted automatically</h3><p class="muted">You reached ${j.limit} fair-play warnings (leaving the test or full screen). Your answers so far are kept. If this was a mistake, talk to the invigilator: they can reopen your test.</p><a class="btn primary" href="#/profile">Back to dashboard</a>`); };
+    overlay(`<div class="emptyi" style="background:var(--red-soft);color:var(--red)">${ico('alert', 28)}</div><h3>Test submitted automatically</h3><p class="muted">You reached ${j.limit} fair-play warnings (leaving the test or full screen, or using the internet). Your answers so far are kept. If this was a mistake, talk to the invigilator: they can reopen your test.</p><a class="btn primary" href="#/profile">Back to dashboard</a>`); };
   if (contest) {
     const policy = comp.paste_policy;
     const edEl = $('#editor');
@@ -678,7 +736,9 @@ async function workspace({ mode, compId, qid, q: startQ }) {
       const hit = async (u) => { try { await fetch(u, { mode: 'no-cors', cache: 'no-store', signal: AbortSignal.timeout(4000) }); return true; } catch (e) { return false; } };
       const online = (await Promise.all(['https://connectivitycheck.gstatic.com/generate_204', 'https://www.cloudflare.com/favicon.ico'].map(hit))).some(Boolean);
       if (online && netState !== true) { track('internet', { reachable: true }); flush();
-        if (!$('#netWarn')) $('.ws-top').insertAdjacentHTML('beforeend', `<span class="badge red" id="netWarn" title="Your device can reach the internet. This is reported to the organisers.">${ico('wifi', 13)} Internet detected</span>`); }
+        if (!$('#netWarn')) $('.ws-top').insertAdjacentHTML('beforeend', `<span class="badge red" id="netWarn" title="Your device can reach the internet. This is reported to the organisers.">${ico('wifi', 13)} Internet detected</span>`);
+        if (LD.internet === 'flag' && !isOver() && warn('internet')) { why.away = `<div class="emptyi" style="background:var(--red-soft);color:var(--red)">${ico('wifi', 28)}</div><h3>Internet is not allowed</h3><p class="muted">This computer can reach the internet. Turn off Wi-Fi, mobile hotspot or any other internet connection.</p>${warnLine()}<button class="btn primary lg" data-ld="ok">Continue the test</button>`; lockDraw(); }
+        else if (LD.internet === 'block' && !isOver()) warn('internet'); }
       if (!online) $('#netWarn')?.remove();
       netState = online;
       if (LD.internet === 'block') {
@@ -714,7 +774,10 @@ async function workspace({ mode, compId, qid, q: startQ }) {
       why.fs = fsGate(true); lockDraw();
     };
     document.addEventListener('fullscreenchange', onFs); onLeave(() => document.removeEventListener('fullscreenchange', onFs));
-    if (!document.fullscreenElement) ws.requestFullscreen().catch(() => { why.fs = fsGate(false); lockDraw(); });
+    if (!document.fullscreenElement) {   // gate first; some browsers never answer a full-screen request made without a click
+      why.fs = fsGate(false); lockDraw();
+      ws.requestFullscreen().then(() => { why.fs = null; lockDraw(); }).catch(() => {});
+    }
   }
 
   // ---------- problem rendering ----------
@@ -828,6 +891,7 @@ async function workspace({ mode, compId, qid, q: startQ }) {
     let h = `<div class="row wrap" style="gap:16px;margin-bottom:10px"><span class="verdict ${esc(s.verdict)}">${esc(s.verdict_name)}</span>
       ${s.kind === 'submit' ? `<span class="small">Score <b>${s.score}</b></span>` : ''}${s.passed != null && s.kind !== 'run' ? `<span class="small">${s.passed}/${s.total} tests passed</span>` : ''}
       ${s.time_ms != null ? `<span class="small muted">${ico('clock')} ${s.time_ms} ms</span>` : ''}${s.memory_kb ? `<span class="small muted">${ico('cpu')} ${(s.memory_kb / 1024).toFixed(1)} MB</span>` : ''}</div>`;
+    if (s.reasons?.length) h += `<div class="notice info small" style="margin-bottom:10px"><b>What to check</b><ul style="margin:4px 0 0;padding-left:18px">${s.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>`;
     if (s.compile_output) h += `<div class="lbl small muted">${s.verdict === 'CE' ? 'Compiler output' : 'Details'}</div><pre style="color:var(--red);max-height:240px">${esc(s.compile_output)}</pre>`;
     if (s.tests?.length) h += `<div class="tc-grid" style="margin-bottom:10px">${s.tests.map((t) => `<span class="tc ${['AC', 'OK'].includes(t.verdict) ? t.verdict : 'bad'}" title="Test ${t.n}${t.sample ? ' (sample)' : ''}: ${esc(VERDICT_NAME[t.verdict] || t.verdict)}">${['AC', 'OK'].includes(t.verdict) ? '' + ico('check') + '' : esc(t.verdict)}</span>`).join('')}</div>`;
     if (s.failed_sample) h += `<div class="small" style="font-weight:650;margin:6px 0">Failed on a sample case</div><div class="io"><div><div class="lbl">Input</div><pre>${esc(s.failed_sample.input)}</pre></div><div><div class="lbl">Expected</div><pre>${esc(s.failed_sample.expected)}</pre></div></div>
@@ -911,7 +975,8 @@ async function workspace({ mode, compId, qid, q: startQ }) {
   };
   const showFinished = (r) => overlay(`<div class="emptyi" style="background:var(--green-soft);color:var(--green)">${ico('check2', 28)}</div><h3>Test submitted</h3>
     ${r && !r.hidden ? `<p class="muted">Score <b>${r.score}</b> / ${r.max} · solved ${r.solved} · current rank ${r.rank ?? '—'} of ${r.of}</p>` : `<p class="muted">Your answers are final.${r ? ` You solved ${r.solved}.` : ''} Results appear on your profile when the organisers publish them.</p>`}
-    <div class="row" style="justify-content:center"><a class="btn" href="#/leaderboard/${compId}">Leaderboard</a><a class="btn primary" href="#/profile">Back to dashboard</a></div>`);
+    <div class="row" style="justify-content:center"><a class="btn" href="#/leaderboard/${compId}">Leaderboard</a><a class="btn primary" href="#/profile">Back to dashboard</a></div>
+    <p class="tiny muted" style="margin:10px 0 0">When the round ends, open it from your dashboard to see each answer and why it did or did not pass.</p>`);
   let finished = false;
   if (contest) $('#finishBtn').onclick = finishTest;
 

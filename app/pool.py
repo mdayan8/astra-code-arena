@@ -1,0 +1,126 @@
+"""AI question jobs shared by AI Studio, the competition assistant and competition question pools.
+
+Pool: a competition gives each student their own draw of questions. While students register, the AI writes variants of
+the competition's questions in the background. A variant joins the pool only if the server proved its answer by running
+code (coding: both reference solutions agree on every test; predict-the-output: the program really prints the marked
+option). Concept and logic questions cannot be proved, so they are never added automatically."""
+import json
+import random
+import re
+import threading
+
+from . import ai, db
+
+_busy, _lock = set(), threading.Lock()
+MAX_ADDED = 15         # AI questions added to one competition at most
+PER_STUDENTS = 4       # one new variant for every 4 registrations
+
+
+def new_draft(c, uid, request, title=""):
+    return c.execute("INSERT INTO generated_question_drafts(source,status,payload,created_by,created_at) VALUES('ai','generating',?,?,?)",
+                     (json.dumps({"request": request, **({"title": title} if title else {})}), uid, db.now())).lastrowid
+
+
+def spawn(c, uid, m):
+    """Start writing m = {count, type, difficulty, topic} questions. Returns how many were started (0 = this type cannot be written)."""
+    typ, n = m.get("type"), max(1, min(int(m.get("count") or 1), 10))
+    topic = (m.get("topic") or "").strip()
+    p = {"difficulty": m.get("difficulty") or "Easy"}
+    if typ in ("mcq", "output", "trace"):
+        logic = typ == "mcq" and re.search(r"logic|reason|aptitude|puzzle", topic)
+        style = "output" if typ != "mcq" or re.search(r"output|predict|trac|code|program|pointer|loop|operator", topic) else "concept"
+        if logic:
+            topic = f"logical reasoning puzzles ({topic}): number series, ratios, time and work, directions, seating, coding-decoding"
+        p.update(style=style, count=n, topic=topic or ("logical reasoning: series, ratios, directions" if logic else "C programming basics" if style == "output" else "data structures and algorithms basics"))
+        gid = new_draft(c, uid, p, f"{n} multiple-choice: {p['topic']}")
+        threading.Thread(target=ai.run_mcq, args=(gid, p, uid), daemon=True).start()
+        return n
+    if typ in (None, "standard"):
+        p.update(topic=topic or "arrays, strings and loops", language="C and Python", samples=2)
+        for _ in range(min(n, 5)):   # each coding problem takes minutes on a small model
+            threading.Thread(target=ai.run_draft, args=(new_draft(c, uid, p), "generate", p, uid), daemon=True).start()
+        return min(n, 5)
+    return 0
+
+
+def _added(c, cid):
+    return db.jl(db.setting(c, f"pool:{cid}", "[]"))
+
+
+def provable(q):
+    """Templates whose variants the server can check by running code."""
+    return q["qtype"] in ("standard", "debug", "complete") or (q["qtype"] in ("mcq", "output", "trace") and "```c" in (q["statement"] or ""))
+
+
+def maybe_grow(c, cid, force=0):
+    """Called when a student registers (force=0) or from the admin page (force=N extra variants)."""
+    comp = db.one(c, "SELECT * FROM competitions WHERE id=?", cid)
+    if not comp or comp["status"] not in ("draft", "published") or not ai.enabled():
+        return 0
+    if not force:
+        if not comp["ai_pool"] or not comp["draw"]:
+            return 0
+        n = db.one(c, "SELECT COUNT(*) AS n FROM competition_participants WHERE competition_id=?", cid)["n"]
+        want = min(MAX_ADDED, n // PER_STUDENTS) - len(_added(c, cid))
+        if want <= 0:
+            return 0
+        force = 1
+    with _lock:
+        if cid in _busy:
+            return 0
+        _busy.add(cid)
+    threading.Thread(target=_grow, args=(cid, min(force, MAX_ADDED)), daemon=True).start()
+    return force
+
+
+def _grow(cid, n):
+    c = db.connect()
+    try:
+        row = db.one(c, "SELECT created_by, ai_prompt FROM competitions WHERE id=?", cid)
+        adm, ask = row["created_by"], (row["ai_prompt"] or "").strip()
+        for _ in range(n):
+            if len(_added(c, cid)) >= MAX_ADDED:
+                break
+            temps = [q for q in db.all_(c, "SELECT cq.question_id, cq.marks, q.category, q.difficulty, qv.title, qv.statement, qv.input_format, qv.output_format, "
+                                              "qv.constraints, qv.qtype FROM competition_questions cq JOIN questions q ON q.id=cq.question_id "
+                                              "JOIN question_versions qv ON qv.id=cq.version_id WHERE cq.competition_id=?", cid)
+                     if provable(q) and q["question_id"] not in _added(c, cid)]
+            if not temps:
+                db.log_error(c, "pool", f"competition {cid}: no question the AI can vary and check (needs coding or predict-the-output questions)")
+                break
+            t = random.choice(temps)
+            if t["qtype"] in ("standard", "debug", "complete"):
+                p = {k: t[k] for k in ("title", "statement", "input_format", "output_format", "constraints")}
+                p.update(auto_publish=True, difficulty=t["difficulty"])
+                if ask:   # the organiser's stored instructions shape the new story (same skill, same input/output style)
+                    p["statement"] = f"{t['statement']}\n\nOrganiser's instructions for the new version: {ask}"
+                gid = new_draft(c, adm, {"variation_of": t["question_id"], "pool": cid})
+                ai.run_draft(gid, "variation", p, adm)
+            else:
+                p = {"topic": ask or f"{t['category']}: {t['title']}", "difficulty": t["difficulty"], "style": "output", "count": 1}
+                gid = new_draft(c, adm, {**p, "pool": cid}, f"Pool variant: {t['title']}")
+                ai.run_mcq(gid, p, adm)
+            g = db.one(c, "SELECT question_id, warnings FROM generated_question_drafts WHERE id=?", gid)
+            ok = g and g["question_id"] and any(w.startswith(("Sandbox check passed", "Answer proved", "The model marked a wrong answer", "Published")) for w in db.jl(g["warnings"]))
+            q = ok and db.one(c, "SELECT latest_version_id AS v, (SELECT validated_at FROM question_versions WHERE id=latest_version_id) AS ok FROM questions WHERE id=?", g["question_id"])
+            if not (q and q["ok"]):
+                continue
+            with db.tx(c):
+                comp = db.one(c, "SELECT status FROM competitions WHERE id=?", cid)
+                if comp["status"] not in ("draft", "published"):
+                    break   # the round started: the pool is final
+                c.execute("UPDATE questions SET status='approved' WHERE id=?", (g["question_id"],))
+                c.execute("INSERT OR IGNORE INTO competition_questions(competition_id,question_id,version_id,ordinal,marks) "
+                          "VALUES(?,?,?,(SELECT COALESCE(MAX(ordinal),0)+1 FROM competition_questions WHERE competition_id=?),?)",
+                          (cid, g["question_id"], q["v"], cid, t["marks"]))
+                db.set_setting(c, f"pool:{cid}", json.dumps(_added(c, cid) + [g["question_id"]]))
+    except Exception as e:   # a background helper must never take the server down
+        db.log_error(c, "pool", e)
+    finally:
+        with _lock:
+            _busy.discard(cid)
+        c.close()
+
+
+def info(c, cid):
+    return {"added": len(_added(c, cid)), "max": MAX_ADDED, "working": cid in _busy, "per_students": PER_STUDENTS}

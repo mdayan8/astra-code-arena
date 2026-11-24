@@ -54,6 +54,9 @@ def public_comp(c, comp, me=None):
         d["joined"] = bool(p)
         d["disqualified"] = bool(p and p["status"] == "disqualified")
         d["can_join"], d["join_reason"] = can_join(c, comp, me)
+        s = db.one(c, "SELECT year, department FROM students WHERE user_id=?", me["id"]) or {}
+        d["for_me"] = (not d["eligible_years"] or s.get("year") in d["eligible_years"]) and (
+            not d["eligible_departments"] or (s.get("department") or "").upper() in [x.upper() for x in d["eligible_departments"]])
     return d
 
 
@@ -152,11 +155,11 @@ def comp_leaderboard(comp_id: int, req: Request, c=Depends(conn)):
     lb = contest.leaderboard(c, comp)
     rows = [{"rank": r["rank"], "name": contest.display_name(r["name"], r["participant_id"], mode), "score": r["score"], "solved": r["solved"],
              "penalty": r["penalty"], "per": r["per"], "me": bool(me and me["id"] == r["user_id"]), "department": r["department"],
-             "avatar": r.get("avatar") if mode == "full" else None} for r in lb["rows"]]
+             "avatar": r.get("avatar") if mode == "full" else None, "warnings": r.get("warnings", 0), "deducted": r.get("deducted", 0)} for r in lb["rows"]]
     return {"competition": {"id": comp["id"], "title": comp["title"], "code": comp["code"], "round_no": comp["round_no"],
                             "display_status": contest.display_status(comp), "remaining_sec": contest.remaining(comp) if comp["status"] in ("live", "paused") else None},
             "questions": lb["questions"], "rows": rows, "tie_break": lb["tie_break"], "frozen": lb.get("frozen", False),
-            "penalty_minutes": contest.scoring_cfg(comp)["penalty_minutes"]}
+            "penalty_minutes": contest.scoring_cfg(comp)["penalty_minutes"], "violation_pct": contest.scoring_cfg(comp).get("violation_pct", 0)}
 
 
 def semester_board(c, sem):
@@ -183,6 +186,32 @@ def sem_lb(sid: int, req: Request, c=Depends(conn)):
     rows = [{"rank": r["rank"], "name": contest.display_name(r["name"], r["participant_id"], mode), "points": r["points"], "solved": r["solved"],
              "played": r["played"], "rounds": r["rounds"], "department": r["department"], "me": bool(me and me["id"] == r["user_id"])} for r in lb["rows"]]
     return {"semester": sem, "competitions": lb["competitions"], "rows": rows}
+
+
+@router.get("/api/leaderboard/overall")
+def overall_lb(req: Request, c=Depends(conn)):
+    me = maybe_student(req, c)
+    mode = db.setting(c, "name_display", "full")
+    totals = {}
+    comps = [x for x in visible_comps(c) if x["status"] in ("ended", "finalized", "archived") and contest.results_visible(x)]
+    for comp in comps:
+        lb = contest.leaderboard(c, comp)
+        for r in lb["rows"]:
+            own = [q for q in lb["questions"] if str(q["id"]) in (r.get("per") or {})] or lb["questions"]
+            mx = sum(q["marks"] for q in own) or 1
+            t = totals.setdefault(r["user_id"], {"user_id": r["user_id"], "name": r["name"], "avatar": r.get("avatar"), "participant_id": r["participant_id"],
+                                                  "department": r["department"], "year": r["year"], "points": 0.0, "solved": 0, "played": 0, "wins": 0})
+            t["points"] = round(t["points"] + r["score"] / mx * 100, 2)
+            t["solved"] += r["solved"]
+            t["played"] += 1
+            t["wins"] += int(r["rank"] == 1 and r["score"] > 0)
+    rows = sorted(totals.values(), key=lambda r: (-r["points"], -r["solved"], -r["wins"]))
+    for i, r in enumerate(rows):
+        same = i and (r["points"], r["solved"], r["wins"]) == (rows[i - 1]["points"], rows[i - 1]["solved"], rows[i - 1]["wins"])
+        r["rank"] = rows[i - 1]["rank"] if same else i + 1
+    return {"rounds": len(comps), "rows": [{"rank": r["rank"], "name": contest.display_name(r["name"], r["participant_id"], mode), "avatar": r["avatar"],
+                                            "points": r["points"], "solved": r["solved"], "played": r["played"], "wins": r["wins"], "department": r["department"],
+                                            "year": r["year"], "me": bool(me and me["id"] == r["user_id"])} for r in rows[:500]]}
 
 
 @router.get("/api/academic-years/{year}/leaderboard")
@@ -403,6 +432,12 @@ def dashboard(u=Depends(student), c=Depends(conn)):
             "recent": recent, "stats": {"submissions": stats["total"] or 0, "accepted": stats["ac"] or 0, "by_language": by_lang}}
 
 
+def grow_pool_soon(c, comp):
+    if comp["ai_pool"] and comp["status"] in ("draft", "published"):
+        from . import pool
+        pool.maybe_grow(c, comp["id"])
+
+
 @router.post("/api/student/competitions/{comp_id}/join")
 def join(comp_id: int, req: Request, u=Depends(student), c=Depends(conn)):
     comp = contest.get_comp(c, comp_id)
@@ -413,6 +448,7 @@ def join(comp_id: int, req: Request, u=Depends(student), c=Depends(conn)):
         raise HTTPException(400, why)
     c.execute("INSERT OR IGNORE INTO competition_participants(competition_id,user_id,joined_at,source) VALUES(?,?,?,'self')", (comp_id, u["id"], db.now()))
     c.execute("INSERT INTO activity_events(competition_id,user_id,type,detail,ip,created_at) VALUES(?,?,'joined',NULL,?,?)", (comp_id, u["id"], client_ip(req), db.now()))
+    grow_pool_soon(c, comp)
     return {"ok": True}
 
 
@@ -442,8 +478,9 @@ def arena_access(c, comp_id, u):
 @router.get("/api/student/competitions/{comp_id}/arena")
 def arena(comp_id: int, u=Depends(student), c=Depends(conn)):
     comp, p = arena_access(c, comp_id, u)
-    qs = db.all_(c, "SELECT cq.question_id, cq.marks, cq.ordinal, qv.* FROM competition_questions cq JOIN question_versions qv ON qv.id=cq.version_id "
-                    "WHERE cq.competition_id=? ORDER BY cq.ordinal", comp_id)
+    byid = {q["question_id"]: q for q in db.all_(c, "SELECT cq.question_id, cq.marks, cq.ordinal, qv.* FROM competition_questions cq JOIN question_versions qv ON qv.id=cq.version_id "
+                                                 "WHERE cq.competition_id=?", comp_id)}
+    qs = [byid[i] for i in contest.assigned(c, comp, u["id"]) if i in byid]
     best = {r["question_id"]: r for r in db.all_(c, "SELECT question_id, MAX(score) AS best, MAX(verdict='AC') AS ac, COUNT(*) AS tries FROM submissions "
                                                      "WHERE competition_id=? AND user_id=? AND kind='submit' AND status='done' GROUP BY question_id", comp_id, u["id"])}
     langs = db.jl(comp["languages"])
@@ -452,6 +489,8 @@ def arena(comp_id: int, u=Depends(student), c=Depends(conn)):
         b = best.get(q["question_id"], {})
         pl = problem_payload(c, q, {"id": q["question_id"], "label": chr(65 + i), "marks": q["marks"], "best": b.get("best") or 0,
                                     "solved": bool(b.get("ac")), "tries": b.get("tries") or 0})
+        if pl["options"] and comp["shuffle"]:
+            pl["options"] = contest.shuffled_options(pl["options"], u["id"], q["question_id"])
         special = [l for l in pl["languages"] if l in ("answer", "prompt")]  # written-answer / prompt questions work in any round
         pl["languages"] = special or [l for l in pl["languages"] if l in langs] or langs
         problems.append(pl)
@@ -478,7 +517,7 @@ def finish(comp_id: int, req: Request, u=Depends(student), c=Depends(conn)):
     if not contest.results_visible(comp):  # organisers publish results later: don't reveal score or rank yet
         return {"ok": True, "hidden": True, "solved": me["solved"] if me else 0, "of": len(lb["rows"])}
     return {"ok": True, "score": me["score"] if me else 0, "solved": me["solved"] if me else 0, "rank": me["rank"] if me else None,
-            "of": len(lb["rows"]), "max": sum(q["marks"] for q in lb["questions"])}
+            "of": len(lb["rows"]), "max": sum(q["marks"] for q in lb["questions"] if q["id"] in set(contest.assigned(c, comp, u["id"])))}
 
 
 @router.get("/api/student/practice")
@@ -577,7 +616,7 @@ def submit(body: SubmitIn, req: Request, u=Depends(student), c=Depends(conn)):
         if body.kind == "submit" and db.one(c, "SELECT 1 AS x FROM participant_finish WHERE competition_id=? AND user_id=?", comp["id"], u["id"]):
             raise HTTPException(409, "You have already finished this test. Your answers are final.")
         cq = db.one(c, "SELECT * FROM competition_questions WHERE competition_id=? AND question_id=?", comp["id"], body.question_id)
-        if not cq:
+        if not cq or body.question_id not in contest.assigned(c, comp, u["id"]):
             raise HTTPException(404, "Problem not found in this competition.")
         v = db.one(c, "SELECT * FROM question_versions WHERE id=?", cq["version_id"])
         allowed = [l for l in db.jl(v["languages"]) if l in ("answer", "prompt")] or [l for l in db.jl(v["languages"]) if l in db.jl(comp["languages"])] or db.jl(comp["languages"])
@@ -633,6 +672,11 @@ def student_submission(c, s, comp=None):
             sm = next((x for x in samples(c, s["version_id"]) if x["ordinal"] == bad["ordinal"]), None)
             if sm:
                 out["failed_sample"] = {"input": sm["input"], "expected": sm["output"], "output": bad["output"], "stderr": bad["stderr"]}
+    if s["status"] == "done" and s["verdict"] not in ("AC", "OK", None, "IE"):   # plain-language reasons, worked out by rules (no AI)
+        from . import feedback
+        fs = out.get("failed_sample") or next(({"expected": r["expected"], "output": r["output"]} for r in out.get("results") or []
+                                               if r.get("expected") is not None and r["verdict"] not in ("AC", "OK")), {})
+        out["reasons"] = feedback.explain(s["verdict"], fs.get("expected"), fs.get("output"), s["code"], s["language"], s["compile_output"] or "")
     return out
 
 
@@ -669,7 +713,8 @@ def my_submissions(competition_id: int | None = None, question_id: int | None = 
 
 
 ACTIVITY_TYPES = {"paste", "paste_blocked", "copy", "cut", "tab_hidden", "tab_visible", "blur", "focus", "fullscreen_exit", "snapshot",
-                  "lang_change", "reset_code", "keystrokes", "right_click", "devtools", "problem_open", "heartbeat", "internet", "ai_tool", "violation"}
+                  "lang_change", "reset_code", "keystrokes", "right_click", "devtools", "problem_open", "heartbeat", "internet", "ai_tool", "violation",
+                  "fullscreen_unavailable"}
 
 
 class ActivityIn(BaseModel):
@@ -692,6 +737,10 @@ def activity(body: ActivityIn, req: Request, u=Depends(student), c=Depends(conn)
         detail = json.dumps(detail)[: (65536 if typ == "snapshot" else 2000)] if detail is not None else None
         qid = e.get("question_id") if isinstance(e.get("question_id"), int) else None
         at = e.get("at") if isinstance(e.get("at"), int) and abs(e["at"] - t) < 600 else t
+        if typ == "violation" and '"internet"' in (detail or "") and (any(r[3] == "violation" and '"internet"' in (r[4] or "") for r in rows) or db.one(
+                c, "SELECT 1 AS x FROM activity_events WHERE competition_id=? AND user_id=? AND type='violation' AND detail LIKE '%\"internet\"%' AND created_at>?",
+                body.competition_id, u["id"], t - 300)):
+            continue   # the same internet connection (for example after a page reload) counts once per 5 minutes
         rows.append((body.competition_id, u["id"], qid, typ, detail, ip, at))
     if rows:
         c.executemany("INSERT INTO activity_events(competition_id,user_id,question_id,type,detail,ip,created_at) VALUES(?,?,?,?,?,?,?)", rows)
@@ -735,24 +784,32 @@ def profile(u=Depends(student), c=Depends(conn)):
 
 # ---------------- gamification: badges, streaks, stats ----------------
 
-BADGES = [  # (key, name, description, icon)
-    ("first_ac", "First Blood", "Get your first Accepted verdict", "spark"),
-    ("solver10", "Problem Solver", "Solve 10 different problems", "check"),
-    ("solver25", "Code Machine", "Solve 25 different problems", "cpu"),
-    ("solver50", "Half Century", "Solve 50 different problems", "star"),
-    ("debut", "Arena Debut", "Submit in your first competition", "flag"),
-    ("veteran", "Veteran", "Compete in 5 competitions", "shield"),
-    ("podium", "Podium", "Finish in the top 3 of a completed round", "medal"),
-    ("champion", "Champion", "Win a completed round", "crown"),
-    ("perfect", "Perfect Round", "Score full marks in a round", "target"),
-    ("polyglot", "Polyglot", "Get Accepted in 3 different languages", "globe"),
-    ("solver100", "Centurion", "Solve 100 different problems", "crown"),
-    ("streak3", "Warming Up", "Code on 3 days in a row", "flame"),
-    ("streak7", "On Fire", "Code on 7 days in a row", "flame"),
-    ("streak30", "Unstoppable", "Code on 30 days in a row", "flame"),
-    ("thinker", "Sharp Reader", "Answer 10 multiple-choice or output questions correctly", "target"),
-    ("speed", "Speedster", "Solve a contest problem within 10 minutes of the start", "bolt"),
+# Each badge has levels with fixed targets, the same for everyone. Nothing is unlocked by one lucky round:
+# competition badges count only rounds with at least MIN_FIELD participants.
+BADGES = [  # (key, name, what is counted, icon, targets for Bronze / Silver / Gold / Platinum)
+    ("solver", "Problem Solver", "different problems solved (practice or competitions)", "check", (10, 25, 50, 100)),
+    ("practice", "Practice Habit", "different days you practised", "target", (5, 15, 40, 100)),
+    ("streak", "On Fire", "days in a row with at least one submission (best run)", "flame", (3, 7, 30, 100)),
+    ("rounds", "Competitor", "competitions you took part in (submitted at least once)", "flag", (3, 10, 25, 50)),
+    ("fair", "Fair Player", "competitions finished with zero fair-play warnings", "shield", (3, 10, 25, 50)),
+    ("podium", "Podium", "top-3 finishes in completed competitions", "medal", (1, 3, 10, 25)),
+    ("champion", "Champion", "competitions won", "crown", (1, 3, 10, 20)),
+    ("perfect", "Perfect Round", "competitions finished with full marks", "star", (1, 3, 10, 20)),
+    ("speed", "Speedster", "competition problems solved within 10 minutes of the start", "bolt", (3, 10, 30, 100)),
+    ("reader", "Sharp Reader", "multiple-choice and predict-the-output questions answered correctly", "spark", (10, 30, 75, 150)),
+    ("polyglot", "Polyglot", "programming languages with an accepted program", "globe", (2, 3, 4, 5)),
 ]
+TIERS = ("Bronze", "Silver", "Gold", "Platinum")
+MIN_FIELD = 5
+
+
+def badge(key, name, what, icon, targets, value):
+    level = sum(1 for t in targets if value >= t)
+    nxt = targets[level] if level < len(targets) else None
+    tier = TIERS[level - 1] if level and len(targets) > 1 else ""
+    how = f"Reach {nxt} {what}." if nxt else "Highest level reached."
+    return {"key": key, "name": name, "icon": icon, "earned": level > 0, "level": level, "levels": len(targets), "tier": tier,
+            "value": value, "next": nxt, "targets": list(targets), "what": what, "description": how}
 
 
 def day_streaks(days: set):
@@ -791,38 +848,42 @@ def student_stats(c, uid):
             solved[s["question_id"]] = s["difficulty"]
     by_diff = {k: sum(1 for v in solved.values() if v == k) for k in ("Easy", "Intermediate", "Challenging")}
     totals = {r["difficulty"]: r["n"] for r in db.all_(c, "SELECT difficulty, COUNT(*) AS n FROM questions WHERE status='approved' GROUP BY difficulty")}
-    ac_langs = {s["language"] for s in subs if s["verdict"] == "AC"}
-    # competition results
-    rounds, podium, champion, perfect, speed = 0, False, False, False, False
+    ac_langs = {s["language"] for s in subs if s["verdict"] == "AC"} - {"answer", "prompt"}
+    days_practised = {datetime.datetime.fromtimestamp(s["created_at"], tz).date() for s in subs if s["competition_id"] is None}
+    reader = len({s["question_id"] for s in subs if s["verdict"] == "AC" and s["language"] == "answer"})
+    rounds, podium, champion, perfect, speed, fair = 0, 0, 0, 0, 0, 0
     for comp in db.all_(c, "SELECT co.* FROM competitions co JOIN competition_participants cp ON cp.competition_id=co.id WHERE cp.user_id=? AND co.status NOT IN ('draft','cancelled')", uid):
         if not any(s["competition_id"] == comp["id"] for s in subs):
             continue
         rounds += 1
-        if comp["status"] in ("ended", "finalized", "archived"):
+        st = comp["started_at"] or comp["start_at"] or 0
+        speed += len({s["question_id"] for s in subs if s["competition_id"] == comp["id"] and s["verdict"] == "AC" and s["created_at"] - st <= 600})
+        if comp["status"] in ("ended", "finalized", "archived") and contest.results_visible(comp):
             lb = contest.leaderboard(c, comp)
             me = next((r for r in lb["rows"] if r["user_id"] == uid), None)
-            if me and me["score"] > 0:
-                podium |= me["rank"] <= 3
-                champion |= me["rank"] == 1
-                full = sum(q["marks"] for q in lb["questions"])
-                perfect |= full > 0 and me["score"] >= full
-        st = comp["started_at"] or comp["start_at"] or 0
-        speed |= any(s["competition_id"] == comp["id"] and s["verdict"] == "AC" and s["created_at"] - st <= 600 for s in subs)
+            if not me:
+                continue
+            fair += int(not me.get("warnings"))
+            if len(lb["rows"]) >= MIN_FIELD and me["score"] > 0:
+                podium += int(me["rank"] <= 3)
+                champion += int(me["rank"] == 1)
+            own = [q for q in lb["questions"] if str(q["id"]) in me["per"]] or lb["questions"]
+            full = sum(q["marks"] for q in own)
+            perfect += int(full > 0 and me["score"] >= full)
     n = len(solved)
-    earned = {"first_ac": n >= 1, "solver10": n >= 10, "solver25": n >= 25, "solver50": n >= 50, "debut": rounds >= 1, "veteran": rounds >= 5,
-              "podium": podium, "champion": champion, "perfect": perfect, "polyglot": len(ac_langs - {"answer", "prompt"}) >= 3, "streak7": longest >= 7, "speed": speed,
-              "solver100": n >= 100, "streak3": longest >= 3, "streak30": longest >= 30,
-              "thinker": len({s["question_id"] for s in subs if s["verdict"] == "AC" and s["language"] == "answer"}) >= 10}
+    value = {"solver": n, "practice": len(days_practised), "streak": longest, "rounds": rounds, "fair": fair, "podium": podium, "champion": champion,
+             "perfect": perfect, "speed": speed, "reader": reader, "polyglot": len(ac_langs)}
+    badges = [badge(k, nm, what, ic, tg, value[k]) for k, nm, what, ic, tg in BADGES]
     # one badge per practice module, created by itself for every module that exists (also ones added later)
     mods = {}
     for r in db.all_(c, "SELECT id, category FROM questions WHERE practice=1 AND status='approved'"):
         mods.setdefault(r["category"], []).append(r["id"])
-    module_badges = [{"key": "module:" + k, "name": k.replace("Placement: ", "") + " Master", "description": f"Solve every problem in {k}", "icon": "award",
-                      "earned": all(i in solved for i in ids)} for k, ids in sorted(mods.items()) if len(ids) >= 5]
+    badges += [badge("module:" + k, k.replace("Placement: ", "") + " Master", f"problems solved in {k}", "award", (len(ids),), sum(1 for i in ids if i in solved))
+               for k, ids in sorted(mods.items()) if len(ids) >= 5]
     return {"heatmap": heat, "streak": cur, "longest_streak": longest, "solved": n, "solved_by_difficulty": by_diff,
             "totals_by_difficulty": {k: totals.get(k, 0) for k in ("Easy", "Intermediate", "Challenging")},
             "languages": sorted(ac_langs), "submissions": len(subs), "accepted": sum(1 for s in subs if s["verdict"] == "AC"), "rounds": rounds,
-            "badges": [{"key": k, "name": nm, "description": d, "icon": ic, "earned": earned[k]} for k, nm, d, ic in BADGES] + module_badges}
+            "badges": badges}
 
 
 @router.get("/api/student/stats")
@@ -907,6 +968,63 @@ def history(u=Depends(student), c=Depends(conn)):
             results.append({"id": comp["id"], "title": comp["title"], "rank": me["rank"], "of": len(lb["rows"]), "score": me["score"],
                             "max": sum(q["marks"] for q in lb["questions"]), "finalized_at": comp["results_published_at"] or comp["finalized_at"]})
     return {"problems": items, "results": results}
+
+
+WHY = {"WA": "Your output did not match the expected output on at least one test.",
+       "TLE": "Your program took longer than the time limit on at least one test.",
+       "RE": "Your program crashed on at least one test (for example an array index out of range or a division by zero).",
+       "CE": "Your program did not compile.", "MLE": "Your program used more memory than allowed.", "OLE": "Your program printed far too much output."}
+
+
+@router.get("/api/student/competitions/{comp_id}/review")
+def review(comp_id: int, u=Depends(student), c=Depends(conn)):
+    """After a round ends: each question this student got, their attempts, the verdict in plain words and how to improve.
+    Hidden test data is never shown; multiple-choice and written answers show the correct answer."""
+    comp = contest.get_comp(c, comp_id)
+    if not comp or not db.one(c, "SELECT 1 AS x FROM competition_participants WHERE competition_id=? AND user_id=?", comp_id, u["id"]):
+        raise HTTPException(404, "You did not take part in this competition.")
+    if comp["status"] not in ("ended", "finalized", "archived"):
+        raise HTTPException(409, "The review opens when the competition ends.")
+    from .api_tools import TIPS
+    out = []
+    for i, qid in enumerate(contest.assigned(c, comp, u["id"], create=False)):
+        q = db.one(c, "SELECT cq.marks, qv.* FROM competition_questions cq JOIN question_versions qv ON qv.id=cq.version_id WHERE cq.competition_id=? AND cq.question_id=?", comp_id, qid)
+        if not q:
+            continue
+        subs = db.all_(c, "SELECT * FROM submissions WHERE competition_id=? AND user_id=? AND question_id=? AND kind='submit' AND status='done' ORDER BY id", comp_id, u["id"], qid)
+        best = max(subs, key=lambda s: (s["score"] or 0, s["id"]), default=None)
+        last = subs[-1] if subs else None
+        item = {"label": chr(65 + i), "question_id": qid, "title": q["title"], "qtype": q["qtype"] or "standard", "statement": q["statement"], "marks": q["marks"],
+                "attempts": len(subs), "best": best["score"] if best else 0, "solved": any(s["verdict"] == "AC" for s in subs),
+                "options": db.jl(q["options"]), "verdict": last["verdict"] if last else None}
+        if last:
+            item["verdict_name"] = judge.VERDICT_NAMES.get(last["verdict"], last["verdict"])
+            item["your_answer" if last["language"] == "answer" else "your_code"] = last["code"][:20000]
+            item["language"] = last["language"]
+            if last["verdict"] != "AC":
+                item["why"] = WHY.get(last["verdict"], "")
+                item["tip"] = TIPS.get(last["verdict"], "")
+                if last["verdict"] == "CE":
+                    item["compiler"] = (last["compile_output"] or "")[:3000]
+                fs = student_submission(c, last).get("failed_sample")
+                if fs:
+                    item["failed_example"] = fs
+                item["reasons"] = student_submission(c, last).get("reasons") or []
+                if last["language"] == "answer" and not db.jl(q["options"]):
+                    ref = db.one(c, "SELECT code FROM reference_solutions WHERE version_id=? AND language='answer'", q["id"])
+                    if ref:
+                        from . import feedback
+                        item["reasons"] = [feedback.output_diff(ref["code"], last["code"])]
+                if last["verdict"] == "WA" and last["language"] != "answer" and not fs:
+                    item["why"] += " It passed the visible examples, so look for edge cases: smallest and largest values, repeated values, empty or single-item input."
+        if q["qtype"] in contest.ANSWER_TYPES:
+            ref = db.one(c, "SELECT code FROM reference_solutions WHERE version_id=? AND language='answer'", q["id"])
+            item["correct_answer"] = ref["code"] if ref else None
+        out.append(item)
+    lb = contest.leaderboard(c, comp) if contest.results_visible(comp) else None
+    me = next((r for r in lb["rows"] if r["user_id"] == u["id"]), None) if lb else None
+    return {"competition": {"id": comp["id"], "title": comp["title"], "code": comp["code"]}, "questions": out,
+            "result": {"rank": me["rank"], "of": len(lb["rows"]), "score": me["score"], "warnings": me.get("warnings", 0), "deducted": me.get("deducted", 0)} if me else None}
 
 
 # ---------------- profile pictures ----------------

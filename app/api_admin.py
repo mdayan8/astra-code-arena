@@ -294,12 +294,16 @@ class CompIn(BaseModel):
     languages: list[str] = ["c", "python"]
     max_marks: int = Field(default=100, ge=1, le=100000)
     scoring: dict = {}
-    leaderboard_visibility: str = Field(default="live", pattern="^(live|after_end|hidden)$")
+    leaderboard_visibility: str = Field(default="hidden", pattern="^(live|after_end|hidden)$")
     show_test_counts: bool = True
     allow_late_join: bool = False
     auto_start: bool = False
     paste_policy: str = Field(default="log", pattern="^(allow|log|block_external)$")
     lockdown: dict = {}
+    draw: int = Field(default=0, ge=0, le=200)   # questions per student, drawn from the competition's list (0 = everyone gets all)
+    shuffle: bool = True                          # each student sees the questions (and multiple-choice options) in their own order
+    ai_pool: bool = True                          # while students register, the AI adds checked variants of these questions
+    ai_prompt: str = Field(default="", max_length=1000)   # what the AI should write for this competition's pool
 
 
 def comp_values(b: CompIn):
@@ -311,8 +315,9 @@ def comp_values(b: CompIn):
     sc.update({k: v for k, v in (b.scoring or {}).items() if k in contest.DEFAULT_SCORING})
     if sc["mode"] not in ("partial", "all_or_nothing") or sc["tie_break"] not in ("penalty", "time"):
         raise HTTPException(400, "Invalid scoring configuration.")
-    for k in ("negative_marks", "first_blood_bonus", "penalty_minutes"):
-        sc[k] = max(0, float(sc[k]) if k == "negative_marks" else int(sc[k]))
+    for k in ("negative_marks", "first_blood_bonus", "penalty_minutes", "violation_pct"):
+        sc[k] = max(0, float(sc[k]) if k in ("negative_marks", "violation_pct") else int(sc[k]))
+    sc["violation_pct"] = min(sc["violation_pct"], 50)
     rs, re_, st = ts(b.reg_start), ts(b.reg_end), ts(b.start_at)
     if rs and re_ and re_ < rs:
         raise HTTPException(400, "Registration end must be after registration start.")
@@ -322,7 +327,8 @@ def comp_values(b: CompIn):
             "registration_mode": b.registration_mode, "reg_start": rs, "reg_end": re_, "start_at": st, "duration_min": b.duration_min,
             "languages": json.dumps(langs), "max_marks": b.max_marks, "scoring": json.dumps(sc), "leaderboard_visibility": b.leaderboard_visibility,
             "show_test_counts": int(b.show_test_counts), "allow_late_join": int(b.allow_late_join), "auto_start": int(b.auto_start),
-            "paste_policy": b.paste_policy, "lockdown": json.dumps(contest.lockdown_cfg(b.lockdown))}
+            "paste_policy": b.paste_policy, "lockdown": json.dumps(contest.lockdown_cfg(b.lockdown)),
+            "draw": b.draw, "shuffle": int(b.shuffle), "ai_pool": int(b.ai_pool), "ai_prompt": b.ai_prompt.strip()}
 
 
 def comp_full(c, comp):
@@ -338,6 +344,8 @@ def comp_full(c, comp):
                                 "q.difficulty, q.category, q.latest_version_id FROM competition_questions cq JOIN question_versions qv ON qv.id=cq.version_id "
                                 "JOIN questions q ON q.id=cq.question_id WHERE cq.competition_id=? ORDER BY cq.ordinal", comp["id"])
     d["participant_count"] = db.one(c, "SELECT COUNT(*) AS n FROM competition_participants WHERE competition_id=?", comp["id"])["n"]
+    from . import pool
+    d["pool"] = pool.info(c, comp["id"])
     d["submission_count"] = db.one(c, "SELECT COUNT(*) AS n FROM submissions WHERE competition_id=? AND kind='submit'", comp["id"])["n"]
     d["admins"] = db.all_(c, "SELECT u.id, u.name, u.username FROM competition_admins ca JOIN users u ON u.id=ca.user_id WHERE ca.competition_id=?", comp["id"])
     d["announcements"] = db.all_(c, "SELECT * FROM announcements WHERE competition_id=? ORDER BY id DESC", comp["id"])
@@ -408,27 +416,10 @@ def assistant_competition(body: AssistIn, req: Request, u=Depends(admin), c=Depe
     out = assistant.describe(plan, chosen, short)
     out["missing"] = missing if ai.enabled() and "ai" in u.get("modules", ["ai"]) else []
     if body.fill and out["missing"]:   # "Write the missing ones with AI": drafts appear in AI Studio for approval
-        started, skipped = 0, []
-        for m in out["missing"]:
-            p = {"topic": m["topic"] or {"mcq": "C programming and data structures", "output": "C output prediction"}.get(m["type"], "arrays, strings and loops"),
-                 "difficulty": m["difficulty"] or "Easy"}
-            if m["type"] in ("mcq", "output"):
-                p.update(style="output" if m["type"] == "output" else "concept", count=min(m["count"], 10))
-                gid = c.execute("INSERT INTO generated_question_drafts(source,status,payload,created_by,created_at) VALUES('ai','generating',?,?,?)",
-                                (json.dumps({"request": p, "title": f"{p['count']} multiple-choice: {p['topic']}"}), u["id"], db.now())).lastrowid
-                threading.Thread(target=ai.run_mcq, args=(gid, p, u["id"]), daemon=True).start()
-                started += p["count"]
-            elif m["type"] in (None, "standard"):
-                for _ in range(min(m["count"], max(0, 6 - started))):   # each coding problem takes minutes on a small model
-                    p2 = {**p, "language": "C and Python", "samples": 2}
-                    gid = c.execute("INSERT INTO generated_question_drafts(source,status,payload,created_by,created_at) VALUES('ai','generating',?,?,?)",
-                                    (json.dumps({"request": p2}), u["id"], db.now())).lastrowid
-                    threading.Thread(target=ai.run_draft, args=(gid, "generate", p2, u["id"]), daemon=True).start()
-                    started += 1
-            else:
-                skipped.append(assistant.TYPE_NAME[m["type"]])
-        audit(c, u, "assistant.fill", detail={"started": started}, ip=client_ip(req))
-        out["filling"] = {"started": started, "skipped": skipped}
+        from . import pool
+        started = {m.get("type"): pool.spawn(c, u["id"], m) for m in out["missing"]}
+        audit(c, u, "assistant.fill", detail={"started": sum(started.values())}, ip=client_ip(req))
+        out["filling"] = {"started": sum(started.values()), "skipped": [assistant.TYPE_NAME[k] for k, v in started.items() if not v]}
     plan["picked"] = [q["id"] for q in chosen]
     out["plan"] = plan
     if not body.create:
@@ -442,16 +433,69 @@ def assistant_competition(body: AssistIn, req: Request, u=Depends(admin), c=Depe
     while db.one(c, "SELECT 1 AS x FROM competitions WHERE code=?", code):
         code, n = f"{base}-{n}", n + 1
     marks = int(plan.get("marks") or 100)
+    per_student = sum(int(q.get("count") or 0) for q in plan.get("questions") or []) if plan.get("unique") else 0
     yr = datetime.now(TZ)
     comp = create_comp(CompIn(title=title, code=code, description="Created with the competition assistant.", duration_min=int(plan.get("duration_min") or 90),
                               academic_year=f"{yr.year if yr.month >= 6 else yr.year - 1}-{str((yr.year if yr.month >= 6 else yr.year - 1) + 1)[2:]}",
                               eligible_years=plan.get("eligible_years") or [], eligible_departments=plan.get("eligible_departments") or [],
                               start_at=plan.get("start_at"), languages=plan.get("languages") or ["c", "python"], max_marks=marks * len(chosen),
-                              scoring={"mode": plan.get("scoring_mode") or "partial"}, leaderboard_visibility=plan.get("leaderboard_visibility") or "live",
-                              lockdown=plan.get("lockdown") or {}), req, u, c)
+                              scoring={"mode": plan.get("scoring_mode") or "partial"}, leaderboard_visibility=plan.get("leaderboard_visibility") or "hidden",
+                              lockdown=plan.get("lockdown") or {}, draw=per_student if per_student < len(chosen) else 0), req, u, c)
     set_questions(comp["id"], QuestionsIn(questions=[{"question_id": q["id"], "marks": marks} for q in chosen]), req, u, c)
     out.update(created={"id": comp["id"], "title": title, "code": code})
     return out
+
+
+class QuickIn(BaseModel):
+    minutes: int = Field(default=15, ge=5, le=180)
+    mcq: int = Field(default=3, ge=0, le=30)
+    coding: int = Field(default=1, ge=0, le=10)
+    difficulty: str = Field(default="Easy", pattern="^(Easy|Intermediate|Challenging)$")
+    strict: bool = False   # exam rules on: full screen, warnings for leaving / internet, auto-submit at 3
+
+
+@router.post("/competitions/quick")
+def quick_round(body: QuickIn, req: Request, u=Depends(admin), c=Depends(conn)):
+    """Instant test round: picks questions, publishes and starts now, so organisers can try the whole flow in a minute."""
+    need(u, "competitions.create")
+    from . import assistant
+    specs = [s for s in ({"count": body.mcq, "type": "mcq", "difficulty": body.difficulty, "topic": ""},
+                         {"count": body.coding, "type": "standard", "difficulty": body.difficulty, "topic": ""}) if s["count"]]
+    if not specs:
+        raise HTTPException(400, "Choose at least one question.")
+    chosen, short, _ = assistant.pick(c, {"questions": specs, "languages": ["c", "python"]})
+    if not chosen:
+        raise HTTPException(400, "The question bank has no approved questions of that kind yet. " + " ".join(short))
+    t = datetime.now(TZ)
+    code, n = f"TEST-{t:%d%m-%H%M}", 2
+    while db.one(c, "SELECT 1 AS x FROM competitions WHERE code=?", code):
+        code, n = f"TEST-{t:%d%m-%H%M}-{n}", n + 1
+    comp = create_comp(CompIn(title=f"Test round {t:%d %b %I:%M %p}", code=code, start_at=db.now(), auto_start=True, description="Instant test round created from the Competitions page.",
+                              duration_min=body.minutes, category="Practice round", languages=["c", "python"], max_marks=100 * len(chosen),
+                              allow_late_join=True, leaderboard_visibility="live", lockdown={"max_violations": 3} if body.strict else {"fullscreen": "off", "leave": "allow"}), req, u, c)
+    set_questions(comp["id"], QuestionsIn(questions=[{"question_id": q["id"], "marks": 10 if q["qtype"] in judge.ANSWER_QTYPES else 100} for q in chosen]), req, u, c)
+    comp_action(comp["id"], ActionIn(action="publish"), req, u, c)
+    if contest.get_comp(c, comp["id"])["status"] != "live":   # start time is now, so it usually starts by itself
+        comp_action(comp["id"], ActionIn(action="start"), req, u, c)
+    return {"id": comp["id"], "code": code, "questions": len(chosen), "problems": short}
+
+
+class PoolIn(BaseModel):
+    count: int = Field(default=3, ge=1, le=15)
+
+
+@router.post("/competitions/{cid}/pool")
+def grow_pool(cid: int, body: PoolIn, req: Request, u=Depends(admin), c=Depends(conn)):
+    comp = comp_or_404(c, cid, u)
+    from . import pool
+    need_ai()
+    if comp["status"] not in ("draft", "published"):
+        raise HTTPException(409, "The question pool can only grow before the competition starts.")
+    if not any(pool.provable(q) for q in db.all_(c, "SELECT qv.qtype, qv.statement FROM competition_questions cq JOIN question_versions qv ON qv.id=cq.version_id WHERE cq.competition_id=?", cid)):
+        raise HTTPException(400, "Add at least one coding or predict-the-output question first: the AI writes variants of those and proves each answer by running it.")
+    started = pool.maybe_grow(c, cid, body.count)
+    audit(c, u, "competition.pool", "competition", cid, cid, {"count": body.count}, client_ip(req))
+    return {"started": started, **pool.info(c, cid)}
 
 
 @router.get("/competitions/{cid}")
@@ -466,7 +510,7 @@ def update_comp(cid: int, body: CompIn, req: Request, u=Depends(admin), c=Depend
         raise HTTPException(409, "This competition is closed; its settings can no longer change.")
     v = comp_values(body)
     if comp["status"] in ("live", "paused", "ended"):  # timing/scoring locked once running: use pause/extend instead
-        for k in ("start_at", "duration_min", "scoring", "languages"):
+        for k in ("start_at", "duration_min", "scoring", "languages", "draw", "shuffle"):
             v.pop(k)
     with db.tx(c):
         c.execute(f"UPDATE competitions SET {','.join(k + '=?' for k in v)}, updated_at=? WHERE id=?", (*v.values(), db.now(), cid))
@@ -885,24 +929,64 @@ def admin_lb(cid: int, u=Depends(admin), c=Depends(conn)):
 
 class PublishIn(BaseModel):
     publish: bool = True
+    at: int | str | None = None   # schedule: release at this time instead of now (only with publish=true)
 
 
 @router.post("/competitions/{cid}/results")
 def publish_results(cid: int, body: PublishIn, req: Request, u=Depends(admin), c=Depends(conn)):
     """Release (or withdraw) results to students: their scores, ranks, the leaderboard and the 'results are out' celebration."""
     comp = comp_or_404(c, cid, u)
+    when = ts(body.at) if body.publish and body.at else None
+    if when and when > db.now():   # scheduled: released by itself at that time, once the round has ended
+        if comp["status"] in ("draft", "cancelled"):
+            raise HTTPException(409, "Publish the competition first.")
+        c.execute("UPDATE competitions SET results_at=?, results_published_at=NULL, updated_at=? WHERE id=?", (when, db.now(), cid))
+        audit(c, u, "competition.results_schedule", "competition", cid, cid, {"at": when}, client_ip(req))
+        return comp_full(c, contest.get_comp(c, cid))
     if body.publish and comp["status"] not in ("ended", "finalized", "archived"):
-        raise HTTPException(409, "End the competition before publishing results.")
+        raise HTTPException(409, "End the competition before publishing results, or schedule them for a later time.")
     if body.publish:
         pend = db.one(c, "SELECT COUNT(*) AS n FROM submissions WHERE competition_id=? AND status IN ('queued','running')", cid)["n"]
         if pend:
             raise HTTPException(409, f"{pend} submission(s) are still being judged. Publish once the queue is empty.")
-    c.execute("UPDATE competitions SET results_published_at=?, updated_at=? WHERE id=?", (db.now() if body.publish else None, db.now(), cid))
+    c.execute("UPDATE competitions SET results_published_at=?, results_at=NULL, updated_at=? WHERE id=?", (db.now() if body.publish else None, db.now(), cid))
     if body.publish:
         c.execute("INSERT INTO announcements(competition_id,title,body,created_by,created_at) VALUES(?,?,?,?,?)",
                   (cid, "Results are out!", "Open your profile or the leaderboard to see your rank.", u["id"], db.now()))
     audit(c, u, "competition.results_" + ("publish" if body.publish else "unpublish"), "competition", cid, cid, ip=client_ip(req))
     return comp_full(c, contest.get_comp(c, cid))
+
+
+@router.post("/competitions/{cid}/grade-saved")
+def grade_saved(cid: int, req: Request, u=Depends(admin), c=Depends(conn)):
+    """Judge each student's last auto-saved answer (editor snapshot) where it is newer than their last submission.
+    For when a PC, browser or the network failed during the round. Runs through the normal judge, so it is scored like any submission."""
+    comp = comp_or_404(c, cid, u)
+    if comp["status"] not in ("paused", "ended", "finalized"):
+        raise HTTPException(409, "Pause or end the competition first.")
+    langs = db.jl(comp["languages"])
+    queued, t = 0, db.now()
+    with db.tx(c):
+        for p in db.all_(c, "SELECT user_id, questions FROM competition_participants WHERE competition_id=? AND status='registered'", cid):
+            mine = set(db.jl(p["questions"]) or [])
+            snaps = db.all_(c, "SELECT question_id, detail, MAX(created_at) AS at FROM activity_events WHERE competition_id=? AND user_id=? AND type='snapshot' "
+                               "AND question_id IS NOT NULL GROUP BY question_id", cid, p["user_id"])
+            for sn in snaps:
+                d = db.jl(sn["detail"], {})
+                code, lang = str(d.get("code") or ""), d.get("language")
+                if not code.strip() or (mine and sn["question_id"] not in mine):
+                    continue
+                cq = db.one(c, "SELECT cq.version_id, qv.languages FROM competition_questions cq JOIN question_versions qv ON qv.id=cq.version_id WHERE cq.competition_id=? AND cq.question_id=?", cid, sn["question_id"])
+                if not cq or (lang not in db.jl(cq["languages"]) and lang not in langs):
+                    continue
+                last = db.one(c, "SELECT MAX(created_at) AS t, MAX(code=?) AS same FROM submissions WHERE competition_id=? AND user_id=? AND question_id=? AND kind='submit'", code, cid, p["user_id"], sn["question_id"])
+                if last["same"] or (last["t"] and last["t"] >= sn["at"]):
+                    continue   # already judged, or they submitted after this save
+                c.execute("INSERT INTO submissions(competition_id,user_id,question_id,version_id,kind,language,code,ip,created_at) VALUES(?,?,?,?,'submit',?,?,'saved-work',?)",
+                          (cid, p["user_id"], sn["question_id"], cq["version_id"], lang, code[:65536], sn["at"]))
+                queued += 1
+        audit(c, u, "competition.grade_saved", "competition", cid, cid, {"queued": queued}, client_ip(req))
+    return {"queued": queued, "message": f"{queued} saved answer(s) sent to the judge. Scores update in a minute." if queued else "Nothing new to grade: every saved answer was already submitted."}
 
 
 @router.get("/practice")
@@ -1609,6 +1693,27 @@ def ai_settings(body: AISetIn, req: Request, u=Depends(admin), c=Depends(conn)):
         db.set_setting(c, "practice_autogrow", "true" if body.autogrow else "false")
     audit(c, u, "ai.settings", detail=body.model_dump(exclude_none=True), ip=client_ip(req))
     return {**ai.status(), "autogrow": db.setting(c, "practice_autogrow", "true") == "true"}
+
+
+class AIPromptIn(BaseModel):
+    text: str = Field(min_length=3, max_length=1000)
+
+
+@router.post("/ai/prompt")
+def ai_prompt(body: AIPromptIn, req: Request, u=Depends(admin), c=Depends(conn)):
+    """One box: "10 easy mcq on pointers and 2 medium coding on arrays" -> the right generation jobs."""
+    need(u, "ai")
+    need_ai()
+    from . import assistant, pool
+    specs = assistant.parse(body.text, {}).get("questions") or []
+    if not specs:   # no count given: one set of 5 on whatever they wrote
+        typ = next((k for k, rx in assistant.TYPES if re.search(rx, body.text.lower())), "mcq")
+        diff = next((k for k, rx in assistant.DIFFS if re.search(rx, body.text.lower())), None)
+        specs = [{"count": 5 if typ in ("mcq", "output", "trace") else 1, "type": typ, "difficulty": diff, "topic": body.text[:80]}]
+    plan = [{**m, "started": pool.spawn(c, u["id"], m)} for m in specs]
+    audit(c, u, "ai.prompt", detail={"text": body.text[:300], "plan": plan}, ip=client_ip(req))
+    return {"plan": [{"count": m["count"], "type": assistant.TYPE_NAME.get(m["type"]) or "coding", "difficulty": m["difficulty"] or "Easy",
+                      "topic": m["topic"], "started": m["started"]} for m in plan]}
 
 
 class AIMcqIn(BaseModel):

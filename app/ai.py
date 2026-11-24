@@ -70,7 +70,8 @@ def status(fresh=True):
 
 
 def enabled():
-    return bool(status(False)["enabled"])
+    v = status(False)
+    return bool(v["enabled"] and v.get("reachable") is not False)   # never start a job the model cannot answer
 
 
 def model():
@@ -210,13 +211,20 @@ def _nl(s):
     return s if s.endswith("\n") or not s else s + "\n"
 
 
+LEVEL_GUIDE = {
+    "Easy": "Easy = a first-year student solves it in 10-15 minutes with one loop or a few conditions (for example: count, sum, reverse, maximum, check even). No advanced algorithms.",
+    "Intermediate": "Moderate = needs two ideas together, such as nested loops, sorting then scanning, a frequency count or a running sum. Solvable in 20-30 minutes.",
+    "Challenging": "Hard = needs a clear algorithm (two pointers, binary search, hashing, recursion or simple dynamic programming), still solvable in 40 minutes.",
+}
+
+
 def generate_question(p: dict) -> dict:
     prompt = f"""Create one ORIGINAL programming problem.
 Topic: {p.get('topic')}
-Difficulty: {p.get('difficulty')}
+Difficulty: {p.get('difficulty')}. {LEVEL_GUIDE.get(p.get('difficulty') or 'Easy', '')} Respect the difficulty strictly.
 Target language for reference solution: {p.get('language') or 'C and Python'}
 Style: {p.get('style') or 'short real-world story, clear and unambiguous'}
-Constraints guidance: {p.get('constraints') or 'small enough for O(n log n)'}
+Constraints guidance: {p.get('constraints') or ('n up to 1000, values fit in int' if (p.get('difficulty') or 'Easy') == 'Easy' else 'small enough for O(n log n)')}
 Number of sample cases: {p.get('samples') or 2}
 Also give 8-12 hidden test inputs covering normal, boundary (minimum and maximum), edge and duplicate-value cases.
 Rules for reference solutions (they are executed automatically and must agree with each other):
@@ -229,46 +237,95 @@ Return JSON exactly in this shape:
     return chat(prompt)
 
 
+HEADERS = "#include <stdio.h>\n#include <string.h>\n#include <stdlib.h>\n"
+_LABEL = re.compile(r"^\s*(?:\(?[A-Da-d]\)\s*|[A-Da-d][.:]\s+|option\s+[A-Da-d]\s*[:.)-]?\s*)", re.I)
+
+
+def clean_option(o):
+    """'B) 1 2 3' -> '1 2 3' (models often label their options; the page labels them already)."""
+    return _LABEL.sub("", str(o)).strip()[:300]
+
+
+def complete_c(code):
+    """Small models forget the #include lines; without them the program does not compile and nothing can be checked."""
+    code = code.strip()
+    if "#include" not in code:
+        code = HEADERS + code
+    if "main" not in code:
+        code += "\nint main(void){return 0;}"
+    return code + "\n"
+
+
 def generate_mcq(p: dict) -> list:
-    """Multiple-choice questions. `style` output = each shows a short C program and asks what it prints (the answer is then
-    checked by really running the program); concept = short theory questions (a person must confirm the answer)."""
+    """Multiple-choice questions. style 'output': each shows a short C program and asks what it prints; the server runs it to get
+    the true answer. Otherwise concept / logic questions; for anything computable the model also writes a tiny Python check that
+    the server runs, so the marked answer is proved instead of trusted."""
     n = max(1, min(int(p.get("count") or 5), 10))
     output = p.get("style") == "output"
+    example = ('{"title": "Loop with a skip", "question": "What does this program print?", "code": "#include <stdio.h>\\nint main(void) {\\n    for (int i = 1; i <= 5; i++) {\\n        if (i == 3) continue;\\n        printf(\\"%d \\", i);\\n    }\\n    return 0;\\n}", '
+               '"options": ["1 2 4 5", "1 2 3 4 5", "1 2", "3"], "answer": 0, "check": "", "explanation": "continue skips 3."}') if output else (
+               '{"title": "Number series", "question": "What comes next: 2, 6, 12, 20, 30, ?", "code": "", "options": ["42", "40", "36", "44"], "answer": 0, '
+               '"check": "s=[2,6,12,20,30]\\nprint(s[-1]+(s[-1]-s[-2])+2)", "explanation": "Differences grow by 2: 4, 6, 8, 10, 12."}')
     prompt = f"""Write {n} multiple-choice questions for engineering students preparing for campus placement tests.
 Topic: {p.get('topic')}
-Difficulty: {p.get('difficulty') or 'Easy'} (simple to read, but the student must think logically)
-{'Each question shows one short, complete C program (with #include <stdio.h> and main, no input, no undefined behaviour) in "code" and asks what it prints.' if output else 'Each is a short concept or logic question; leave "code" empty unless a tiny snippet is needed.'}
-Rules: exactly 4 short options, exactly one correct, all different, no "all of the above" or "none of the above". "answer" is the position (0-3) of the correct option.
-Return JSON: {{"questions": [{{"title": str, "question": str, "code": str, "options": [str, str, str, str], "answer": int, "explanation": str}}]}}"""
-    out = []
-    for q in (chat(prompt).get("questions") or []):
-        if not isinstance(q, dict):
+Difficulty: {p.get('difficulty') or 'Easy'}. Short to read, but the student must think. All {n} questions must be different from each other.
+{'Each question shows one short, complete C program in "code" (with #include <stdio.h> and int main, no input, no undefined behaviour) and asks what it prints. The options are possible outputs.' if output else 'Each is a short concept, logic or aptitude question. If the answer can be calculated, put in "check" a tiny Python 3 program that prints the correct answer exactly as it is written in the options; otherwise leave "check" empty.'}
+Rules: exactly 4 options, exactly one correct, all different, plain text without letters like "A)" in front, no "all of the above". "answer" is the position 0-3 of the correct option.
+Example of the FORMAT only (do not reuse its content or numbers; every question must be new and different from the others):
+{example}
+Return JSON: {{"questions": [ ...{n} items like the example... ]}}"""
+    out, seen = [], set()
+    for k, q in enumerate(chat(prompt).get("questions") or []):
+        if not isinstance(q, dict) or not str(q.get("question") or "").strip():
             continue
-        opts = list(dict.fromkeys(str(o).strip()[:300] for o in (q.get("options") or []) if str(o).strip()))
+        raw = [clean_option(o) for o in (q.get("options") or []) if clean_option(o)]
         try:
             ans = int(q.get("answer"))
-        except (TypeError, ValueError):
+            marked = raw[ans]
+        except (TypeError, ValueError, IndexError):
             continue
-        if len(opts) != 4 or not 0 <= ans < 4 or not str(q.get("question") or "").strip():
-            continue   # malformed: drop it instead of guessing
-        code = fix_code("c", str(q.get("code") or "")) if str(q.get("code") or "").strip() else ""
-        out.append({"title": str(q.get("title") or q["question"])[:120], "question": str(q["question"]).strip(), "code": code, "options": opts,
-                    "answer": opts[ans], "explanation": str(q.get("explanation") or "")[:1500]})
+        opts = list(dict.fromkeys(raw))
+        raw_code = str(q.get("code") or "").strip()
+        if raw_code and not output and not looks_like_code("c", raw_code):   # a Python calculation put in the wrong field
+            q["check"], raw_code = q.get("check") or raw_code, ""
+        code = complete_c(fix_code("c", raw_code)) if raw_code else ""
+        if output and (not code or "Loop with a skip" in str(q.get("title"))):   # missing program, or the example copied back
+            continue
+        if len(opts) < (3 if code else 4):   # a program is run to get the truth, so one duplicate option can be replaced; otherwise drop it
+            continue
+        if "2, 6, 12, 20, 30" in q["question"] or "Loop with a skip" in str(q.get("title")):
+            continue   # the format example copied back
+        key = (q["question"].strip().lower(), re.sub(r"\s+", "", code))
+        if key in seen:
+            continue
+        seen.add(key)
+        title = str(q.get("title") or "").strip()
+        if not title or len(title) > 60 or title.lower().startswith(("what", "which", "find", "question")):
+            title = f"{str(p.get('topic') or 'Quiz').split(':')[0].strip().title()[:40]} #{len(out) + 1}"
+        out.append({"title": title[:120], "question": str(q["question"]).strip(), "code": code, "options": opts[:4], "answer": marked,
+                    "check": str(q.get("check") or "").strip()[:3000], "explanation": str(q.get("explanation") or "")[:1500]})
     return out[:n]
 
 
-def _run_c(c, qid, vid, user_id, code, timeout=90):
-    """Runs a C program in the judge sandbox (through the normal queue) and returns what it printed, or None."""
-    sid = c.execute("INSERT INTO submissions(competition_id,user_id,question_id,version_id,kind,language,code,custom_input,created_at) VALUES(NULL,?,?,?,'run','c',?,' ',?)",
-                    (user_id, qid, vid, code, db.now())).lastrowid
+def _run(c, qid, vid, user_id, lang, code, timeout=90):
+    """Runs a program in the judge sandbox (through the normal queue) and returns what it printed, or None."""
+    sid = c.execute("INSERT INTO submissions(competition_id,user_id,question_id,version_id,kind,language,code,custom_input,created_at) VALUES(NULL,?,?,?,'run',?,?,' ',?)",
+                    (user_id, qid, vid, lang, code, db.now())).lastrowid
     t = time.time()
-    while time.time() - t < timeout:
-        r = db.one(c, "SELECT status, verdict FROM submissions WHERE id=?", sid)
-        if r and r["status"] == "done":
-            o = db.one(c, "SELECT output FROM judging_results WHERE submission_id=? ORDER BY ordinal LIMIT 1", sid)
-            return o["output"] if o and r["verdict"] == "OK" else None
-        time.sleep(1)
-    return None
+    try:
+        while time.time() - t < timeout:
+            r = db.one(c, "SELECT status, verdict FROM submissions WHERE id=?", sid)
+            if r and r["status"] == "done":
+                o = db.one(c, "SELECT output FROM judging_results WHERE submission_id=? ORDER BY ordinal LIMIT 1", sid)
+                return o["output"] if o and r["verdict"] == "OK" else None
+            time.sleep(1)
+        return None
+    finally:
+        c.execute("DELETE FROM submissions WHERE id=?", (sid,))
+
+
+def _run_c(c, qid, vid, user_id, code, timeout=90):
+    return _run(c, qid, vid, user_id, "c", code, timeout)
 
 
 def run_mcq(draft_id: int, params: dict, user_id: int):
@@ -277,38 +334,51 @@ def run_mcq(draft_id: int, params: dict, user_id: int):
     c = db.connect()
     first = None
     try:
-        qs = []
-        for attempt in range(3):
+        want, qs, seen = max(1, min(int(params.get("count") or 5), 10)), [], set()
+        for attempt in range(4):   # small models drop or repeat items: ask again for the missing ones (and survive a bad reply)
             try:
-                qs = generate_mcq(params)
-            except RuntimeError:
+                got = generate_mcq({**params, "count": want - len(qs)})
+            except Exception:
                 continue
-            if qs:
+            for q in got:
+                k = re.sub(r"\W+", "", q["question"].lower() + q["code"])
+                if k not in seen:
+                    seen.add(k)
+                    qs.append(q)
+            if len(qs) >= want:
                 break
+        qs = qs[:want]
         if not qs:
             raise RuntimeError("The model did not return usable multiple-choice questions. Try again, a simpler topic, or a larger model.")
         for n, q in enumerate(qs):
             log = []
             st = q["question"] + (f"\n\n```c\n{q['code'].strip()}\n```" if q["code"] else "")
+            if len(q["options"]) < 4:   # placeholder for the duplicate that was removed; fixed below once the program has run
+                q["options"] = q["options"] + ["None of these outputs"][: 4 - len(q["options"])]
             with db.tx(c):
                 qid = create_question(c, QuestionIn(title=q["title"][:150], category=str(params.get("topic") or "Problem Solving")[:60], difficulty=params.get("difficulty") or "Easy",
                                                     tags=["mcq", "ai"], statement=st, qtype="mcq", options=q["options"], answer=q["answer"], practice=True), {"id": user_id}, "ai")
             vid = db.one(c, "SELECT latest_version_id AS v FROM questions WHERE id=?", qid)["v"]
-            if q["code"] and params.get("style") == "output":
-                real = _run_c(c, qid, vid, user_id, q["code"])
-                c.execute("DELETE FROM submissions WHERE question_id=? AND kind='run' AND user_id=?", (qid, user_id))
-                norm = lambda x: "\n".join(l.rstrip() for l in str(x).strip().splitlines())
-                if real is None or not real.strip():
-                    log.append("The program could not be run in the sandbox, so the marked answer is the model's guess. Check it before approving.")
-                elif norm(real) == norm(q["answer"]):
-                    log.append("Sandbox check passed: the program really prints the marked answer.")
-                else:
-                    match = next((o for o in q["options"] if norm(o) == norm(real)), None)
-                    opts = q["options"] if match else [real.strip() if o == q["answer"] else o for o in q["options"]]
+            norm = lambda x: "\n".join(l.rstrip() for l in str(x).strip().splitlines())
+            prog = ("c", q["code"]) if q["code"] else ("python", q["check"]) if q["check"] else None
+            real = _run(c, qid, vid, user_id, *prog) if prog else None
+            if prog and real is not None and real.strip():
+                match = next((o for o in q["options"] if norm(o) == norm(real)), None)
+                if match and norm(match) == norm(q["answer"]):
+                    log.append("Answer proved: the server ran the " + ("program" if q["code"] else "calculation") + " and it prints the marked option.")
+                elif match or q["code"]:
+                    # a program's output is the truth; a calculation is trusted only when it lands exactly on one of the options
+                    opts = q["options"] if match else [real.strip()[:300] if o == q["answer"] else o for o in q["options"]]
+                    while len(opts) < 4 and q["code"]:
+                        opts.append(f"{real.strip()[:280]} (and a newline)" if len(opts) % 2 else "Compilation error")
                     with db.tx(c):
-                        c.execute("UPDATE question_versions SET options=? WHERE id=?", (json.dumps(opts), vid))
-                        set_answer(c, vid, match or real.strip())
-                    log.append("The model marked a wrong answer. Corrected to what the program really prints in the sandbox.")
+                        c.execute("UPDATE question_versions SET options=? WHERE id=?", (json.dumps(list(dict.fromkeys(opts))[:4]), vid))
+                        set_answer(c, vid, match or real.strip()[:300])
+                    log.append("The model marked a wrong answer. Corrected to what the " + ("program really prints" if q["code"] else "calculation gives") + " when the server runs it.")
+                else:
+                    log.append("The model's calculation does not match any option, so the answer is unproved. Check it before approving.")
+            elif prog:
+                log.append("The " + ("program" if q["code"] else "calculation") + " could not be run, so the marked answer is the model's guess. Check it before approving.")
             else:
                 log.append("Concept question: read it and confirm the marked answer before approving.")
             if q["explanation"]:
@@ -548,7 +618,11 @@ def run_draft(draft_id: int, kind: str, params: dict, user_id: int = None):
                     log.append(f"Still failing after {REPAIR_ROUNDS} repair rounds; fix the reference solutions by hand: " + " | ".join(problems[:3]))
                 break
             log.append(f"Round {rnd + 1}: {len(problems)} problem(s) found, asking the model to repair.")
-            fixed = repair({**q, "reference": {r["language"]: r["code"] for r in db.all_(c, "SELECT language, code FROM reference_solutions WHERE version_id=?", v["id"])}}, problems)
+            try:   # a broken reply from the model costs one round, never the whole draft
+                fixed = repair({**q, "reference": {r["language"]: r["code"] for r in db.all_(c, "SELECT language, code FROM reference_solutions WHERE version_id=?", v["id"])}}, problems)
+            except Exception as e:
+                log.append(f"Round {rnd + 1}: the model's fix was unreadable ({str(e)[:80]}).")
+                fixed = None
             if not fixed:
                 log.append("The model returned no fix.")
                 continue

@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 TMP = Path(tempfile.mkdtemp(prefix="astra-e2e-"))
 PORT = int(os.environ.get("E2E_PORT", "8765"))
 ENV = {**os.environ, "DATA_DIR": str(TMP), "APP_PORT": str(PORT), "APP_HOST": "127.0.0.1", "ADMIN_PATH": "astra-control-e2e",
-       "JUDGE_WORKERS": "3", "JUDGE_TMP": f"/tmp/astra-judge-e2e-{PORT}", "APP_ENV": "test", "AI_BASE_URL": "", "AI_MODEL": ""}
+       "JUDGE_WORKERS": "3", "JUDGE_TMP": f"/tmp/astra-judge-e2e-{PORT}", "APP_ENV": "test", "AI_BASE_URL": "http://127.0.0.1:9/v1", "AI_MODEL": "none"}  # no AI, even if Ollama runs here
 os.environ.update(ENV)
 sys.path.insert(0, str(ROOT))
 
@@ -448,9 +448,11 @@ def run():
     assert s1.get(f"{BASE}/api/me")["user"]["semester"] == 4
     st = s1.get(f"{BASE}/api/student/stats")
     got = {b["key"] for b in st["badges"] if b["earned"]}
-    assert {"first_ac", "debut", "podium", "champion", "perfect", "speed"} <= got, got
+    assert {"podium", "champion", "perfect"} <= got and not {"solver", "rounds", "streak"} & got, got   # strict targets: 2 solves / 2 rounds are not enough
+    sv = next(b for b in st["badges"] if b["key"] == "solver")
+    assert sv["value"] >= 2 and sv["next"] == 10 and sv["targets"] == [10, 25, 50, 100] and "Reach 10" in sv["description"] and sv["level"] == 0, sv
     assert st["solved"] >= 2 and sum(st["heatmap"].values()) >= 3 and st["streak"] >= 1 and len(st["badges"]) >= 17 and any(b["key"].startswith("module:") for b in st["badges"])
-    ok(f"badges computed from real results ({len(got)}/12 earned: champion, podium, perfect round, speedster…), streak + heatmap")
+    ok(f"levelled badges with fixed targets ({len(got)} earned: podium, champion, perfect round; Problem Solver still locked at {sv['value']}/10), streak + heatmap")
     sup.put(f"{A}/settings", {"departments": ["CSE", "ISE", "AIML", "cse"]})
     assert anon.get(f"{BASE}/api/public/info")["departments"] == ["CSE", "ISE", "AIML"]
     land = anon.get(f"{BASE}/api/public/landing")
@@ -703,7 +705,7 @@ def run():
     s3.post(f"{BASE}/api/student/competitions/{cq['id']}/join")
     evA.post(f"{A}/competitions/{cq['id']}/action", {"action": "start"})
     ar = s3.get(f"{BASE}/api/student/competitions/{cq['id']}/arena")
-    assert ar["problems"][0]["options"] == ["4", "5", "6", "Forever"] and ar["problems"][0]["languages"] == ["answer"]
+    assert sorted(ar["problems"][0]["options"]) == sorted(["4", "5", "6", "Forever"]) and ar["problems"][0]["languages"] == ["answer"]
     time.sleep(5.1)
     r = s3.post(f"{BASE}/api/student/submissions", {"competition_id": cq["id"], "question_id": mc["id"], "language": "answer", "code": "6", "kind": "submit"})
     assert wait_sub(s3, r["id"])["verdict"] == "WA"
@@ -711,6 +713,68 @@ def run():
     s3.post(f"{BASE}/api/student/submissions", {"competition_id": cq["id"], "question_id": mc["id"], "language": "answer", "code": "5", "kind": "submit"}, expect=409)
     evA.post(f"{A}/competitions/{cq['id']}/action", {"action": "end"})
     ok("organiser creates a multiple-choice question (bad answer / too few options refused); in a competition the first answer is final")
+    rv = s3.get(f"{BASE}/api/student/competitions/{cq['id']}/review")
+    q0 = rv["questions"][0]
+    assert q0["correct_answer"] == "5" and q0["your_answer"] == "6" and not q0["solved"] and q0["options"], q0
+    s1.get(f"{BASE}/api/student/competitions/{cq['id']}/review", expect=404)
+    ok("after the round each student gets a review: their answer, the correct one, and why it failed")
+
+    print("Own question set per student, fair-play penalty, instant test round")
+    mcqs = [x for x in s3.get(f"{BASE}/api/student/practice") if x["qtype"] == "mcq"]
+    pick = [x for x in mcqs if x["difficulty"] == "Easy"][:5] + [x for x in mcqs if x["difficulty"] == "Intermediate"][:5]
+    cd = evA.post(f"{A}/competitions", {**base, "title": "Draw Round", "code": "DRAW-ROUND", "start_at": int(time.time()) + 3600, "max_marks": 40, "draw": 4, "shuffle": True,
+                                         "scoring": {**base["scoring"], "violation_pct": 10}})
+    assert cd["draw"] == 4 and cd["shuffle"] == 1 and cd["ai_pool"] == 1
+    evA.put(f"{A}/competitions/{cd['id']}/questions", {"questions": [{"question_id": x["id"], "marks": 10} for x in pick]})
+    evA.post(f"{A}/competitions/{cd['id']}/action", {"action": "publish"})
+    evA.post(f"{A}/competitions/{cd['id']}/pool", {"count": 2}, expect=503)      # no AI on this machine: refused with a reason, nothing breaks
+    for s in (s1, s2, s3):
+        s.post(f"{BASE}/api/student/competitions/{cd['id']}/join")
+    evA.post(f"{A}/competitions/{cd['id']}/action", {"action": "start"})
+    diff = {x["id"]: x["difficulty"] for x in pick}
+    sets = {}
+    for name, s in (("a", s1), ("b", s2), ("c", s3)):
+        ids = [p["id"] for p in s.get(f"{BASE}/api/student/competitions/{cd['id']}/arena")["problems"]]
+        assert len(ids) == 4 == len(set(ids)) and set(ids) <= set(diff)
+        assert [p["id"] for p in s.get(f"{BASE}/api/student/competitions/{cd['id']}/arena")["problems"]] == ids   # stable on reload
+        assert sorted(diff[i] for i in ids) == ["Easy", "Easy", "Intermediate", "Intermediate"]                    # same mix for everyone
+        sets[name] = ids
+    other = next(i for i in diff if i not in sets["a"])
+    time.sleep(5.1)
+    s1.post(f"{BASE}/api/student/submissions", {"competition_id": cd["id"], "question_id": other, "language": "answer", "code": "x", "kind": "submit"}, expect=404)
+    first = sets["a"][0]
+    right = sup.get(f"{A}/questions/{first}")["references"]["answer"]
+    r = s1.post(f"{BASE}/api/student/submissions", {"competition_id": cd["id"], "question_id": first, "language": "answer", "code": right, "kind": "submit"})
+    assert wait_sub(s1, r["id"])["verdict"] == "AC"
+    for k in range(2):
+        s1.post(f"{BASE}/api/student/activity", {"competition_id": cd["id"], "events": [{"type": "violation", "detail": {"kind": "left_test", "n": k + 1}}]})
+    for _ in range(3):   # the same internet connection reported again and again (reloads) counts once per 5 minutes
+        s2.post(f"{BASE}/api/student/activity", {"competition_id": cd["id"], "events": [{"type": "violation", "detail": {"kind": "internet"}}]})
+    lbd = s1.get(f"{BASE}/api/competitions/{cd['id']}/leaderboard")
+    me = next(x for x in lbd["rows"] if x["me"])
+    assert next(x for x in sup.get(f"{A}/competitions/{cd['id']}/leaderboard")["rows"] if x["name"] == "Bharath K")["warnings"] == 1
+    assert me["warnings"] == 2 and me["deducted"] == 8 and me["score"] == 2 and lbd["violation_pct"] == 10, me   # 10 marks - 2 x 10% of 40
+    assert len({x["rank"] for x in lbd["rows"] if x["score"] == 0}) == 1                                             # equal results share a rank
+    evA.post(f"{A}/competitions/{cd['id']}/action", {"action": "end"})
+    ok("each student gets their own 4 of 10 questions (same easy/medium mix, own order, fixed on reload, others refused); 2 warnings cost 2 x 10%")
+    qr = evA.post(f"{A}/competitions/quick", {"mcq": 2, "coding": 1, "minutes": 10})
+    qc = evA.get(f"{A}/competitions/{qr['id']}")
+    assert qc["status"] == "live" and len(qc["questions"]) == 3 and qc["allow_late_join"] and qr["code"].startswith("TEST-")
+    s2.post(f"{BASE}/api/student/competitions/{qr['id']}/join")
+    assert len(s2.get(f"{BASE}/api/student/competitions/{qr['id']}/arena")["problems"]) == 3
+    dash = s2.get(f"{BASE}/api/student/dashboard")
+    assert any(x["id"] == qr["id"] and x["for_me"] for x in dash["active"])
+    evA.post(f"{A}/competitions/{qr['id']}/action", {"action": "end"})
+    ok("instant test round: picked, published and live in one click; it shows on the student's dashboard")
+    sum2 = next(x for x in s3.get(f"{BASE}/api/student/practice") if x["title"] == "Sum of Two Numbers")
+    time.sleep(5.1)
+    r = s3.post(f"{BASE}/api/student/submissions", {"competition_id": None, "question_id": sum2["id"], "language": "c", "kind": "run",
+                                                    "code": "#include <stdio.h>\nint main(){long a,b;printf(\"Enter two numbers: \");scanf(\"%ld %ld\",&a,&b);printf(\"%ld\\n\",a+b);return 0;}\n"})
+    fb = wait_sub(s3, r["id"])
+    assert fb["verdict"] == "WA" and any("extra text" in x or "prompt" in x for x in fb["reasons"]), fb.get("reasons")
+    ov = anon.get(f"{BASE}/api/leaderboard/overall")
+    assert ov["rounds"] >= 1 and ov["rows"] and ov["rows"][0]["rank"] == 1
+    ok("rule-based feedback names the mistake (an input prompt in the output); overall leaderboard across all rounds")
     jr = s3.get(f"{BASE}/api/student/journey")
     names = [x["category"] for x in jr["stages"]]
     assert names[:5] == ["C Basics", "C Logic Building", "Placement: Predict the Output", "Placement: CS Fundamentals", "Placement: Logical Thinking"], names
@@ -720,7 +784,7 @@ def run():
     pm = evA.post(f"{A}/assistant/competition", {"message": "placement mock: 6 moderate mcq, 2 easy coding, 40 minutes"})
     assert [q["qtype"] for q in pm["questions"]].count("mcq") == 6 and pm["missing"] == [], pm["problems"]
     st2 = sup.get(f"{A}/ai/status")
-    assert st2["enabled"] is False and st2["autogrow"] is True and "Install AI model" in st2["reason"]
+    assert st2.get("reachable") is False and st2["autogrow"] is True and st2["reason"]
     ok("learning path lists the modules in placement order with the next problem; the assistant builds a mock from multiple-choice + coding; AI absence is explained, never an error")
 
     print("Rate limiting & recovery")

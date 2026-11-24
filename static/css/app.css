@@ -670,3 +670,44 @@ label.field > .hint { display: block; line-height: 1.4; }
 #ws.ansmode #vg, #ws.ansmode .ws-bar, #ws.ansmode #editor, #ws.ansmode #hg, #ws.ansmode #btabs [data-t=custom] { display: none; }
 #ws.ansmode .ws-bottom { display: block; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
 #ws.ansmode .ws-out { min-height: 90px; }
+
+/* ---- dashboard banner, badge levels ---- */
+.livebanner { border-radius: 16px; padding: 4px 18px; color: #fff; background: linear-gradient(120deg, #6d28d9, #4338ca); box-shadow: 0 12px 30px color-mix(in srgb, #4338ca 25%, transparent); }
+.livebanner.live { background: linear-gradient(120deg, #0d9f61, #0b7a52); }
+.livebanner .lb-row { display: flex; align-items: center; gap: 14px; padding: 14px 0; flex-wrap: wrap; }
+.livebanner .lb-row + .lb-row { border-top: 1px solid #ffffff2e; }
+.livebanner .tiny { opacity: .85; text-transform: uppercase; letter-spacing: .06em; font-weight: 650; }
+.livebanner b { font-size: 17px; } .livebanner .small { opacity: .9; }
+.livebanner .btn { background: #fff; color: #1f1147; border-color: #fff; }
+.lb-dot { width: 10px; height: 10px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 5px #ffffff38; flex: none; }
+.livebanner.live .lb-dot { animation: lbp 1.6s infinite; } @keyframes lbp { 50% { box-shadow: 0 0 0 9px #ffffff10; } }
+.hexb { cursor: pointer; } .hexb span small { display: block; font-size: 10.5px; color: var(--muted); font-weight: 600; }
+.tierrow { padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px; font-size: 13px; color: var(--muted); }
+.tierrow.done { color: var(--text); border-color: color-mix(in srgb, var(--green) 40%, var(--border)); background: var(--green-soft); }
+.tierrow > span:first-child { font-weight: 650; min-width: 70px; }
+
+/* ---- competition guide + checklist ---- */
+.guide { display: flex; gap: 12px; align-items: center; max-width: 1080px; padding: 12px 14px; margin-bottom: 12px; border-radius: 12px; border: 1px solid var(--accent-ring); background: var(--accent-soft); }
+.guide b { font-size: 13.5px; } .guide .small { color: var(--text); opacity: .85; }
+.chipbtn.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+details.more > summary { cursor: pointer; font-size: 13px; color: var(--muted); font-weight: 600; }
+.checklist { margin: 0; padding: 0; list-style: none; counter-reset: ck; display: grid; gap: 8px; }
+.checklist li { counter-increment: ck; display: flex; align-items: center; gap: 10px; font-size: 13.5px; flex-wrap: wrap; }
+.checklist li::before { content: counter(ck); width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; flex: none; font-size: 12px; font-weight: 700; border: 1px solid var(--border-strong); color: var(--muted); }
+.checklist li.done::before { content: "✓"; background: var(--green); border-color: var(--green); color: #fff; }
+.checklist li.done b { text-decoration: line-through; color: var(--muted); }
+
+/* ---- round review ---- */
+.rv > summary { display: flex; align-items: center; gap: 12px; padding: 14px 16px; cursor: pointer; list-style: none; }
+.rv > summary::-webkit-details-marker { display: none; }
+.rvl { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; font-weight: 700; background: var(--surface-2); border: 1px solid var(--border); flex: none; }
+.rv.ok .rvl { background: var(--green-soft); color: var(--green); } .rv.bad .rvl { background: var(--red-soft); color: var(--red); }
+.rvb { padding: 0 16px 16px; border-top: 1px solid var(--border); padding-top: 12px; }
+.mcq .opt.wrong { border-color: var(--red); background: var(--red-soft); }
+.askbox { border-color: var(--accent-ring); background: linear-gradient(180deg, var(--accent-soft), var(--surface) 70%); }
+.input.lg, .askbox .input { height: 44px; font-size: 15px; }
+.asst-ask { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); border: 1px dashed var(--border-strong); font-size: 13px; }
+/* two columns with a side panel; stacks on smaller laptops so nothing gets squeezed */
+.side2 { grid-template-columns: minmax(0, 1fr) var(--side, 340px); }
+@media (max-width: 1180px) { .side2 { grid-template-columns: minmax(0, 1fr) !important; } }
+.kv dd { min-width: 0; overflow-wrap: anywhere; }

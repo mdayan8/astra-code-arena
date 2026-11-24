@@ -1,5 +1,7 @@
 """Competition timing/state and leaderboard scoring (pure functions over stored rows => reproducible)."""
 import json
+import random
+import secrets
 
 from . import db
 
@@ -9,7 +11,60 @@ DEFAULT_SCORING = {
     "first_blood_bonus": 0,     # extra marks for the first full solve of each question
     "penalty_minutes": 10,      # tie-break penalty per wrong attempt before the best submission
     "tie_break": "penalty",     # penalty (time + wrong attempts) | time (time of last score improvement)
+    "violation_pct": 5,         # % of the student's maximum marks deducted per fair-play warning (left the test, internet, ...)
 }
+ANSWER_TYPES = ("output", "trace", "mcq")
+
+
+def _split(n, sizes):
+    """Largest-remainder split of n slots over groups of the given sizes (everyone gets the same counts per group)."""
+    tot = sum(sizes)
+    raw = [n * s / tot for s in sizes]
+    got = [min(int(r), s) for r, s in zip(raw, sizes)]
+    for k in sorted(range(len(sizes)), key=lambda k: -(raw[k] - int(raw[k]))):
+        if sum(got) >= n:
+            break
+        if got[k] < sizes[k]:
+            got[k] += 1
+    return got
+
+
+def draw_for(pool, n, shuffle, rng):
+    """pool: [{question_id, difficulty, qtype}] in organiser order. Every student gets the same mix of question kind and difficulty."""
+    if n and n < len(pool):
+        groups = {}
+        for q in pool:
+            groups.setdefault(("answer" if q["qtype"] in ANSWER_TYPES else "code", q["difficulty"]), []).append(q)
+        keys = sorted(groups)
+        pick = []
+        for k, m in zip(keys, _split(n, [len(groups[k]) for k in keys])):
+            pick += rng.sample(groups[k], m)
+        chosen = {q["question_id"] for q in pick}
+        pool = [q for q in pool if q["question_id"] in chosen]
+    ids = [q["question_id"] for q in pool]
+    if shuffle:
+        rng.shuffle(ids)
+    return ids
+
+
+def assigned(c, comp, uid, create=True):
+    """The questions this student sees, in their order. Fixed at first look and stored, so a reload never changes it."""
+    p = db.one(c, "SELECT questions FROM competition_participants WHERE competition_id=? AND user_id=?", comp["id"], uid)
+    if p and p["questions"]:
+        return db.jl(p["questions"])
+    pool = db.all_(c, "SELECT cq.question_id, q.difficulty, qv.qtype FROM competition_questions cq JOIN questions q ON q.id=cq.question_id "
+                      "JOIN question_versions qv ON qv.id=cq.version_id WHERE cq.competition_id=? ORDER BY cq.ordinal", comp["id"])
+    ids = draw_for(pool, comp["draw"] or 0, bool(comp["shuffle"]), random.Random(secrets.randbits(64)))
+    if create and p:
+        c.execute("UPDATE competition_participants SET questions=? WHERE competition_id=? AND user_id=? AND questions IS NULL", (json.dumps(ids), comp["id"], uid))
+        return db.jl(db.one(c, "SELECT questions FROM competition_participants WHERE competition_id=? AND user_id=?", comp["id"], uid)["questions"])
+    return ids
+
+
+def shuffled_options(opts, uid, qid):
+    o = list(opts)
+    random.Random(f"{uid}:{qid}").shuffle(o)
+    return o
 
 
 DEFAULT_LOCKDOWN = {"internet": "flag", "fullscreen": "required", "leave": "warn", "max_violations": 0, "no_copy": False, "no_paste": False}
@@ -79,6 +134,12 @@ def tick(c, comp):
         c.execute("INSERT INTO audit_logs(user_id,action,entity,entity_id,competition_id,detail,created_at) VALUES(NULL,'competition.auto_end','competition',?,?,NULL,?)",
                   (comp["id"], comp["id"], t))
         changed = True
+    elif (comp["status"] in ("ended", "finalized", "archived") and comp.get("results_at") and not comp.get("results_published_at") and t >= comp["results_at"]
+          and not db.one(c, "SELECT 1 AS x FROM submissions WHERE competition_id=? AND status IN ('queued','running') LIMIT 1", comp["id"])):
+        c.execute("UPDATE competitions SET results_published_at=?, updated_at=? WHERE id=? AND results_published_at IS NULL", (t, t, comp["id"]))
+        c.execute("INSERT INTO announcements(competition_id,title,body,created_by,created_at) VALUES(?,?,?,NULL,?)",
+                  (comp["id"], "Results are out!", "Open your profile or the leaderboard to see your rank.", t))
+        changed = True
     return db.one(c, "SELECT * FROM competitions WHERE id=?", comp["id"]) if changed else comp
 
 
@@ -114,6 +175,11 @@ def compute_leaderboard(c, comp):
     marks = {q["question_id"]: q["marks"] for q in qs}
     parts = db.all_(c, "SELECT cp.user_id, cp.status, u.name, u.avatar, s.participant_id, s.department, s.year FROM competition_participants cp "
                        "JOIN users u ON u.id=cp.user_id LEFT JOIN students s ON s.user_id=u.id WHERE cp.competition_id=?", comp["id"])
+    mine = {r["user_id"]: db.jl(r["questions"]) for r in db.all_(c, "SELECT user_id, questions FROM competition_participants WHERE competition_id=? AND questions IS NOT NULL", comp["id"])}
+    warns = {r["user_id"]: r["n"] for r in db.all_(c, "SELECT a.user_id, COUNT(*) AS n FROM activity_events a WHERE a.competition_id=? AND a.type='violation' AND a.created_at >= "
+                                                     "COALESCE((SELECT MAX(r.created_at) FROM activity_events r WHERE r.competition_id=a.competition_id AND r.user_id=a.user_id AND r.type='reopened'), 0) "
+                                                     "GROUP BY a.user_id", comp["id"])}
+    fin = {r["user_id"]: r["finished_at"] for r in db.all_(c, "SELECT user_id, finished_at FROM participant_finish WHERE competition_id=?", comp["id"])}
     subs = db.all_(c, "SELECT id, user_id, question_id, verdict, score, created_at FROM submissions WHERE competition_id=? AND kind='submit' "
                       "AND status='done' AND verdict NOT IN ('IE','CE') ORDER BY created_at, id", comp["id"])
     start = comp["started_at"] or comp["start_at"] or 0
@@ -139,7 +205,10 @@ def compute_leaderboard(c, comp):
         if p["status"] == "disqualified":
             continue
         per, total, solved, penalty, last = {}, 0.0, 0, 0, 0
+        own = set(mine.get(p["user_id"]) or marks)
         for q in qs:
+            if q["question_id"] not in own:
+                continue
             st = state.get(p["user_id"], {}).get(q["question_id"])
             if not st:
                 continue
@@ -155,15 +224,23 @@ def compute_leaderboard(c, comp):
                 penalty += mins + st["wrong_before_best"] * cfg["penalty_minutes"]
                 last = max(last, st["best_at"])
             per[str(q["question_id"])] = {"score": round(sc, 2), "ac": st["ac"], "tries": st["tries"]}
+        n_warn = warns.get(p["user_id"], 0)
+        cut = round(min(total, n_warn * float(cfg.get("violation_pct") or 0) / 100 * sum(marks[i] for i in own)), 2) if n_warn else 0
+        total -= cut
         rows.append({"user_id": p["user_id"], "name": p["name"], "avatar": avatar_url(p["user_id"], p["avatar"]), "participant_id": p["participant_id"], "department": p["department"],
-                     "year": p["year"], "score": round(total, 2), "solved": solved, "penalty": int(penalty), "last": last, "per": per})
+                     "year": p["year"], "score": round(total, 2), "solved": solved, "penalty": int(penalty), "last": last, "per": per,
+                     "warnings": n_warn, "deducted": cut, "finished_at": fin.get(p["user_id"])})
+    # Same rule for everyone: higher score, then less penalty time (time taken + wrong attempts), then whoever reached
+    # that score first, then whoever finished first. Names never decide a rank: equal on all of these = shared rank.
+    late = 10**12
     if cfg["tie_break"] == "time":
-        rows.sort(key=lambda r: (-r["score"], r["last"] or 10**12, r["name"]))
+        tk = lambda r: (-r["score"], r["last"] or late, r["finished_at"] or late)
     else:
-        rows.sort(key=lambda r: (-r["score"], r["penalty"], r["last"] or 10**12, r["name"]))
+        tk = lambda r: (-r["score"], r["penalty"], r["last"] or late, r["finished_at"] or late)
+    rows.sort(key=lambda r: (tk(r), r["name"]))
     prev, rank = None, 0
     for i, r in enumerate(rows):
-        key = (r["score"], r["penalty"]) if cfg["tie_break"] != "time" else (r["score"], r["last"])
+        key = tk(r)
         if key != prev:
             rank, prev = i + 1, key
         r["rank"] = rank
@@ -177,7 +254,9 @@ def leaderboard(c, comp):
         lb = compute_leaderboard(c, comp)  # for question headers
         snap = db.all_(c, "SELECT le.*, u.name, u.avatar, s.participant_id, s.department, s.year FROM leaderboard_entries le JOIN users u ON u.id=le.user_id "
                           "LEFT JOIN students s ON s.user_id=u.id WHERE le.competition_id=? ORDER BY le.rank, u.name", comp["id"])
-        lb["rows"] = [{**r, "avatar": avatar_url(r["user_id"], r["avatar"]), "per": db.jl(r["detail"], {}), "last": None} for r in snap]
+        live = {r["user_id"]: r for r in lb["rows"]}   # warnings are not in the snapshot; they never change after the end
+        lb["rows"] = [{**r, "avatar": avatar_url(r["user_id"], r["avatar"]), "per": db.jl(r["detail"], {}), "last": None,
+                       "warnings": live.get(r["user_id"], {}).get("warnings", 0), "deducted": live.get(r["user_id"], {}).get("deducted", 0)} for r in snap]
         lb["frozen"] = True
         return lb
     return compute_leaderboard(c, comp)
