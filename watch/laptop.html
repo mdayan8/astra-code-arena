@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ASTRA Watch</title>
+<!-- Laptop dashboard for the ASTRA Code Arena server. Open this file in a browser on any computer.
+     It reads the alert feed (ntfy) and the server's private status page; it never changes anything on the server. -->
+<script>try{var t=localStorage.getItem('aw:theme');if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<style>
+:root{--bg:#f5f5fa;--card:#fff;--text:#16161d;--muted:#6b6f7e;--line:#e6e6ef;--soft:#f1f0f8;--pri:#6d4aff;--ok:#12a150;--okbg:#e6f6ee;--warn:#b7791f;--warnbg:#fff4dc;--err:#d92d3a;--errbg:#fdecee;--shadow:0 1px 2px #1a124008,0 8px 24px #1a12400a}
+:root[data-theme=dark]{--bg:#0f0f15;--card:#17171f;--text:#ececf3;--muted:#9a9db0;--line:#2a2a37;--soft:#1e1e29;--okbg:#10291e;--warnbg:#2b2310;--errbg:#2c1418;--shadow:0 1px 2px #0006;color-scheme:dark}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0f0f15;--card:#17171f;--text:#ececf3;--muted:#9a9db0;--line:#2a2a37;--soft:#1e1e29;--okbg:#10291e;--warnbg:#2b2310;--errbg:#2c1418;--shadow:0 1px 2px #0006;color-scheme:dark}}
+*{box-sizing:border-box}body{margin:0;font:14px/1.5 Inter,system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--text)}
+header{position:sticky;top:0;z-index:5;background:color-mix(in srgb,var(--bg) 85%,transparent);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.top{max-width:1200px;margin:0 auto;padding:12px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.logo{width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,#7c5cff,#4c2fd6);display:grid;place-items:center;color:#fff;font-weight:800;font-size:13px}
+h1{font-size:16px;margin:0}.sp{flex:1}.muted{color:var(--muted)}.small{font-size:12.5px}.tiny{font-size:11.5px}
+main{max-width:1200px;margin:0 auto;padding:18px 20px 60px;display:grid;gap:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;box-shadow:var(--shadow);min-width:0}
+.card h3{margin:0 0 12px;font-size:14px}.head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px}.head h3{margin:0}
+.grid{display:grid;gap:16px}.g2{grid-template-columns:repeat(2,minmax(0,1fr))}.k6{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px}
+@media(max-width:980px){.g2{grid-template-columns:1fr}.k6{grid-template-columns:repeat(3,minmax(0,1fr))}}@media(max-width:560px){.k6{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;box-shadow:var(--shadow)}.kpi b{display:block;font-size:24px;letter-spacing:-.02em}.kpi span{font-size:12px;color:var(--muted)}
+.kpi.bad b{color:var(--err)}.kpi.mid b{color:var(--warn)}
+.pill{display:inline-flex;align-items:center;gap:7px;padding:5px 12px;border-radius:99px;font-weight:650;font-size:12.5px;background:var(--soft);color:var(--muted)}
+.pill .d{width:8px;height:8px;border-radius:50%;background:currentColor}.pill.ok{background:var(--okbg);color:var(--ok)}.pill.err{background:var(--errbg);color:var(--err)}.pill.warn{background:var(--warnbg);color:var(--warn)}
+.btn{border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:10px;padding:7px 12px;font:inherit;font-weight:550;cursor:pointer}.btn:hover{border-color:var(--pri)}.btn.pri{background:var(--pri);border-color:var(--pri);color:#fff}
+.seg{display:inline-flex;background:var(--soft);border-radius:10px;padding:3px}.seg button{border:0;background:none;color:var(--muted);font:inherit;font-size:12.5px;padding:4px 10px;border-radius:7px;cursor:pointer}.seg button.on{background:var(--card);color:var(--text);box-shadow:var(--shadow)}
+input{font:inherit;color:var(--text);background:var(--card);border:1px solid var(--line);border-radius:10px;padding:9px 11px;width:100%}input:focus{outline:3px solid color-mix(in srgb,var(--pri) 22%,transparent);border-color:var(--pri)}
+table{width:100%;border-collapse:collapse;font-size:13.5px}th{text-align:left;font-size:11.5px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em;padding:6px 8px;border-bottom:1px solid var(--line)}td{padding:9px 8px;border-bottom:1px solid var(--line)}td.n,th.n{text-align:right}
+.bar{height:8px;background:var(--soft);border-radius:9px;overflow:hidden}.bar i{display:block;height:100%;background:var(--pri);border-radius:9px}
+.vrow{display:grid;grid-template-columns:100px 1fr 56px;gap:10px;align-items:center;font-size:13px;margin:6px 0}
+.spark{display:flex;align-items:flex-end;gap:2px;height:70px}.spark i{flex:1;background:color-mix(in srgb,var(--pri) 70%,transparent);border-radius:2px 2px 0 0;min-height:2px}
+.feed{display:grid;gap:8px;max-height:560px;overflow:auto}.al{border:1px solid var(--line);border-left:4px solid var(--line);border-radius:10px;padding:10px 12px}
+.al.p5,.al.p4{border-left-color:var(--err)}.al.p3{border-left-color:var(--pri)}.al.p2,.al.p1{border-left-color:var(--muted)}
+.al b{font-size:13.5px}.al pre{margin:6px 0 0;white-space:pre-wrap;word-break:break-word;font:12.5px/1.45 ui-monospace,Menlo,monospace;color:var(--muted)}
+.err{border:1px solid var(--line);border-radius:10px;padding:9px 11px;margin-bottom:8px}.err pre{margin:4px 0 0;white-space:pre-wrap;word-break:break-word;font:12px/1.45 ui-monospace,Menlo,monospace}
+.empty{padding:22px;text-align:center;color:var(--muted);font-size:13px}
+.setup{max-width:640px;margin:40px auto}.setup ol{padding-left:18px;line-height:1.8}code{background:var(--soft);padding:2px 6px;border-radius:6px;font-size:12.5px}
+.hidden{display:none!important}
+</style></head><body>
+<header><div class="top"><div class="logo">AW</div><div><h1>ASTRA Watch</h1><div class="tiny muted" id="sub">Server monitor</div></div><span class="sp"></span>
+  <span class="pill" id="conn"><span class="d"></span>Not connected</span>
+  <div class="seg" id="theme"><button data-t="">Auto</button><button data-t="light">Light</button><button data-t="dark">Dark</button></div>
+  <button class="btn" id="setBtn">Settings</button></div></header>
+
+<div class="setup card hidden" id="setup">
+  <h3 style="font-size:17px">Connect to your server</h3>
+  <ol class="small"><li>On the server PC, run <code>sudo bash /opt/astra-arena/watch/install.sh</code> once.</li>
+    <li>It prints an alert link like <code>https://ntfy.sh/…</code>. Paste it below.</li>
+    <li>This page then shows every alert, and the live status as soon as the server sends its status link (within a minute of the tool starting).</li></ol>
+  <label class="small muted">Alert link</label><input id="topicIn" placeholder="https://ntfy.sh/your-private-name">
+  <label class="small muted" style="display:block;margin-top:10px">Status link (optional: filled in by itself from the alerts)</label><input id="dashIn" placeholder="https://….trycloudflare.com/?k=…">
+  <div style="display:flex;gap:8px;margin-top:14px"><button class="btn pri" id="save">Connect</button><button class="btn" id="cancel">Cancel</button></div>
+  <p class="tiny muted">Both links are stored only in this browser. Keep them private: anyone with them can see the alerts and the status page.</p>
+</div>
+
+<main id="app" class="hidden">
+  <div class="k6" id="kpis"></div>
+  <div class="grid g2">
+    <section class="card"><div class="head"><h3>Live rounds</h3><span class="tiny muted" id="asof"></span></div><div id="live"></div></section>
+    <section class="card"><div class="head"><h3>Server PC</h3><span class="tiny muted" id="sysnote"></span></div><div id="sys"></div></section>
+  </div>
+  <div class="grid g2">
+    <section class="card"><div class="head"><h3>Submissions per minute</h3><span class="tiny muted">last hour</span></div><div class="spark" id="spark"></div></section>
+    <section class="card"><div class="head"><h3>Verdicts</h3><span class="tiny muted" id="vwin"></span></div><div id="verdicts"></div></section>
+  </div>
+  <div class="grid g2">
+    <section class="card"><div class="head"><h3>Alerts</h3><div style="display:flex;gap:8px;align-items:center"><span class="tiny muted" id="acount"></span><button class="btn" id="notif">Turn on pop-ups</button></div></div><div class="feed" id="feed"></div></section>
+    <section class="card"><div class="head"><h3>Recent errors</h3><button class="btn" id="copyErr">Copy for Claude</button></div><div id="errors"></div></section>
+  </div>
+</main>
+
+<script>
+const $ = (s) => document.querySelector(s), esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const store = { get: (k) => { try { return localStorage.getItem('aw:' + k) || ''; } catch (e) { return ''; } }, set: (k, v) => { try { localStorage.setItem('aw:' + k, v); } catch (e) {} } };
+const ago = (t) => { const s = Math.max(0, Math.round(Date.now() / 1000 - t)); return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`; };
+const when = (t) => new Date(t * 1000).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+let topic = store.get('topic'), dash = store.get('dash'), alerts = [], status = null, lastOk = 0, es = null, notifyOn = store.get('notify') === '1';
+
+// ---- theme ----
+const setTheme = (t) => { if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme; store.set('theme', t); document.querySelectorAll('#theme button').forEach((b) => b.classList.toggle('on', b.dataset.t === t)); };
+document.querySelectorAll('#theme button').forEach((b) => b.onclick = () => setTheme(b.dataset.t)); setTheme(store.get('theme'));
+
+// ---- setup ----
+const showSetup = (on) => { $('#setup').classList.toggle('hidden', !on); $('#app').classList.toggle('hidden', on); $('#topicIn').value = topic; $('#dashIn').value = dash; };
+$('#setBtn').onclick = () => showSetup(true); $('#cancel').onclick = () => topic && showSetup(false);
+$('#save').onclick = () => { const t = $('#topicIn').value.trim().replace(/\/+$/, ''); if (!/^https?:\/\/[^/]+\/[A-Za-z0-9_-]{6,}$/.test(t)) return alert('Paste the alert link exactly as the installer printed it, for example https://ntfy.sh/astra-…');
+  topic = t; dash = $('#dashIn').value.trim(); store.set('topic', topic); store.set('dash', dash); alerts = []; showSetup(false); connect(); };
+
+// ---- alerts (ntfy keeps the last 12 hours; then a live stream) ----
+const isLink = (m) => (m.title || '').includes('dashboard link') && /https?:\/\/\S+\?k=/.test(m.message || '');
+function addAlert(m, live) {
+  if (alerts.some((a) => a.id === m.id)) return;
+  if (isLink(m)) { const u = m.message.match(/https?:\/\/\S+/)[0]; if (u !== dash) { dash = u; store.set('dash', dash); pollStatus(); } }
+  alerts.unshift(m); alerts.sort((a, b) => b.time - a.time); alerts = alerts.slice(0, 300); drawFeed();
+  if (live && notifyOn && !isLink(m) && 'Notification' in window && Notification.permission === 'granted') new Notification(m.title || 'ASTRA', { body: (m.message || '').slice(0, 200) });
+  if (live && (m.priority || 3) >= 4) { document.title = '(!) ASTRA Watch'; beep(); }
+}
+async function connect() {
+  if (es) es.close();
+  try { const r = await fetch(`${topic}/json?poll=1&since=12h`, { cache: 'no-store' }); (await r.text()).split('\n').filter(Boolean).forEach((l) => { const m = JSON.parse(l); if (m.event === 'message') addAlert(m, false); }); }
+  catch (e) { setConn('err', 'Alert feed unreachable'); }
+  es = new EventSource(`${topic}/sse`);
+  es.onmessage = (e) => { try { const m = JSON.parse(e.data); if (m.event === 'message') addAlert(m, true); } catch (x) {} };
+  es.onerror = () => setConn(status ? 'warn' : 'err', 'Alert feed reconnecting');
+  drawFeed(); pollStatus();
+}
+function drawFeed() {
+  $('#acount').textContent = `${alerts.filter((a) => !isLink(a)).length} in the last 12 h`;
+  const list = alerts.filter((a) => !isLink(a));
+  $('#feed').innerHTML = list.length ? list.map((a) => `<div class="al p${a.priority || 3}"><div style="display:flex;justify-content:space-between;gap:8px"><b>${esc(a.title || 'Alert')}</b><span class="tiny muted" title="${esc(when(a.time))}">${ago(a.time)}</span></div><pre>${esc(a.message)}</pre></div>`).join('')
+    : '<div class="empty">No alerts in the last 12 hours. Quiet is good.</div>';
+}
+
+// ---- live status from the server's private page ----
+async function pollStatus() {
+  if (!dash) { setConn(alerts.length ? 'warn' : 'err', alerts.length ? 'Waiting for the status link' : 'Waiting for the server'); return waiting(); }
+  try {
+    const u = new URL(dash); const r = await fetch(`${u.origin}/status.json?k=${encodeURIComponent(u.searchParams.get('k') || '')}`, { cache: 'no-store' });
+    if (!r.ok) throw new Error(r.status === 403 ? 'wrong key' : `HTTP ${r.status}`);
+    status = await r.json(); lastOk = Date.now(); draw();
+    setConn(status.error ? 'warn' : 'ok', status.error ? 'Connected, database not readable' : 'Live');
+  } catch (e) { setConn('err', lastOk ? `Server unreachable (last seen ${ago(lastOk / 1000)})` : 'Server unreachable'); if (!status) waiting(); }
+}
+function waiting() {   // before the first status arrives: say so instead of showing empty boxes
+  const w = '<div class="empty">Waiting for the server PC. This fills in once its status link arrives in the alerts.</div>';
+  $('#kpis').innerHTML = ['rounds live now', 'students in live rounds', 'submissions, last 15 min', 'waiting to be judged', 'fair-play warnings', 'errors'].map((k) => kpi(k, '—')).join('');
+  ['#live', '#sys', '#verdicts', '#errors'].forEach((x) => { $(x).innerHTML = w; }); $('#spark').innerHTML = '';
+}
+const setConn = (k, t) => { const c = $('#conn'); c.className = 'pill ' + k; c.innerHTML = `<span class="d"></span>${esc(t)}`; };
+function kpi(label, v, tone) { return `<div class="kpi ${tone || ''}"><b>${esc(v)}</b><span>${esc(label)}</span></div>`; }
+function draw() {
+  const s = status, sys = s.system || {};
+  $('#asof').textContent = 'updated ' + ago(s.at);
+  $('#kpis').innerHTML = kpi('rounds live now', s.live.length) + kpi('students in live rounds', s.participants) + kpi('submissions, last 15 min', s.submissions_15m)
+    + kpi('waiting to be judged', s.queue, s.queue > 50 ? 'bad' : s.queue > 10 ? 'mid' : '') + kpi('fair-play warnings', s.violations, s.violations ? 'mid' : '')
+    + kpi('errors', s.errors, s.errors ? 'bad' : '');
+  $('#live').innerHTML = s.live.length ? `<table><thead><tr><th>Round</th><th class="n">Students</th><th class="n">Submitted</th><th class="n">Finished</th></tr></thead><tbody>${s.live.map((x) => `<tr><td><b>${esc(x.title)}</b><div class="tiny muted">${esc(x.code)} · ${esc(x.status)}</div></td><td class="n">${x.participants}</td><td class="n">${x.submissions}</td><td class="n">${x.finished}<div class="bar" style="margin-top:4px"><i style="width:${x.participants ? Math.round(x.finished / x.participants * 100) : 0}%"></i></div></td></tr>`).join('')}</tbody></table>`
+    : '<div class="empty">No round is running right now.</div>';
+  const ram = sys.ram_used_pct, load = sys.load1 != null && sys.cores ? Math.round(sys.load1 / sys.cores * 100) : null;
+  const row = (k, v, pct, bad) => `<div class="vrow" style="grid-template-columns:120px 1fr 80px"><span class="muted">${k}</span><div class="bar">${pct != null ? `<i style="width:${Math.min(100, pct)}%;background:${bad ? 'var(--err)' : 'var(--pri)'}"></i>` : ''}</div><b style="text-align:right">${v}</b></div>`;
+  $('#sys').innerHTML = row('Memory used', ram != null ? ram + '%' : '—', ram, ram > 90) + row('CPU load', load != null ? load + '%' : '—', load, load > 200)
+    + row('Free disk', sys.disk_free_gb != null ? sys.disk_free_gb + ' GB' : '—', null) + row('Judge', `${s.running || 0} running`, null)
+    + row('Oldest waiting', s.queue ? s.oldest_queued_sec + ' s' : '—', s.queue ? Math.min(100, s.oldest_queued_sec / 0.6) : 0, s.oldest_queued_sec > 60)
+    + (Object.keys(s.flags || {}).length ? `<div class="tiny" style="color:var(--err);margin-top:8px">Problems now: ${esc(Object.keys(s.flags).join(', '))}</div>` : '');
+  $('#sysnote').textContent = sys.cores ? `${sys.cores} cores` : '';
+  const mx = Math.max(1, ...s.per_min);
+  $('#spark').innerHTML = s.per_min.map((n, i) => `<i style="height:${Math.round(n / mx * 100)}%" title="${60 - i} min ago: ${n}"></i>`).join('');
+  const vt = Object.values(s.verdicts).reduce((a, b) => a + b, 0) || 1, names = { AC: 'Accepted', WA: 'Wrong', CE: 'Compile err', RE: 'Crash', TLE: 'Too slow', IE: 'Judge error', pending: 'Waiting' };
+  $('#vwin').textContent = `last ${s.window_min} min`;
+  $('#verdicts').innerHTML = Object.keys(s.verdicts).length ? Object.entries(s.verdicts).map(([k, n]) => `<div class="vrow"><span>${esc(names[k] || k)}</span><div class="bar"><i style="width:${n / vt * 100}%;background:${k === 'AC' ? 'var(--ok)' : k === 'IE' ? 'var(--err)' : 'var(--pri)'}"></i></div><b style="text-align:right">${n}</b></div>`).join('')
+    : '<div class="empty">No submissions in this period.</div>';
+  $('#errors').innerHTML = s.last_errors.length ? s.last_errors.map((e) => `<div class="err"><div style="display:flex;justify-content:space-between"><b class="small">${esc(e.source)}</b><span class="tiny muted">${ago(e.at)}</span></div><pre>${esc(e.message)}</pre></div>`).join('')
+    : '<div class="empty">No errors recorded.</div>';
+}
+$('#copyErr').onclick = () => { const s = status; const txt = s ? `ASTRA Watch report (${new Date().toLocaleString()})\nLive rounds: ${s.live.map((x) => x.code).join(', ') || 'none'} · queue ${s.queue} · errors ${s.errors}\n\nRecent errors:\n` + s.last_errors.map((e) => `[${when(e.at)}] ${e.source}: ${e.message}`).join('\n')
+  + '\n\nRecent alerts:\n' + alerts.filter((a) => !isLink(a)).slice(0, 15).map((a) => `[${when(a.time)}] ${a.title}: ${a.message}`).join('\n') : 'No status yet';
+  navigator.clipboard.writeText(txt).then(() => { $('#copyErr').textContent = 'Copied: paste it to Claude'; setTimeout(() => $('#copyErr').textContent = 'Copy for Claude', 2500); }); };
+
+// ---- pop-ups and sound ----
+$('#notif').onclick = async () => { if (!('Notification' in window)) return alert('This browser cannot show pop-ups for this page. Alerts still appear here with a sound.');
+  const p = await Notification.requestPermission(); notifyOn = p === 'granted'; store.set('notify', notifyOn ? '1' : ''); $('#notif').textContent = notifyOn ? 'Pop-ups on' : 'Pop-ups blocked'; };
+if (notifyOn) $('#notif').textContent = 'Pop-ups on';
+function beep() { try { const a = new AudioContext(), o = a.createOscillator(), g = a.createGain(); o.frequency.value = 880; o.connect(g); g.connect(a.destination); g.gain.setValueAtTime(.15, a.currentTime); g.gain.exponentialRampToValueAtTime(.001, a.currentTime + .6); o.start(); o.stop(a.currentTime + .6); } catch (e) {} }
+document.addEventListener('visibilitychange', () => { if (!document.hidden) document.title = 'ASTRA Watch'; });
+
+setInterval(pollStatus, 15000); setInterval(() => { if (status) $('#asof').textContent = 'updated ' + ago(status.at); drawFeed(); }, 30000);
+if (topic) { showSetup(false); connect(); } else showSetup(true);
+</script></body></html>

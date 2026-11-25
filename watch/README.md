@@ -94,3 +94,18 @@ down/up after 2 failures, retry after a failed send, broken DB path does not cra
 dashboard JSON + wrong-key rejection, and that the DB connection is really read-only.
 
 Logs: `journalctl -u astra-watch -f`
+
+## Watch everything from your laptop
+
+Open `watch/laptop.html` (double-click it, or drag it into Chrome / Safari) on any computer. On first open, paste the
+alert link the installer printed (`https://ntfy.sh/...`). The page then shows, live:
+
+- live rounds with students, submissions and how many have finished
+- students, submissions in the last 15 minutes, judge queue, fair-play warnings, errors
+- server PC memory, CPU load, free disk, judge activity, oldest waiting submission
+- submissions per minute (last hour) and the verdict mix
+- every alert of the last 12 hours, new ones with a sound (and a pop-up if you allow it)
+- recent errors, with **Copy for Claude** to paste the details into a chat for a fix
+
+It finds the server's status link by itself from the alerts (the link changes whenever the tunnel restarts).
+Nothing is installed on the laptop and the page never changes anything on the server.

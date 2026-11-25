@@ -463,6 +463,8 @@ def make_server(cfg, state, port=None):
             self.send_header("Cache-Control", "no-store")
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("X-Robots-Tag", "noindex")
+            if ctype == "application/json":   # the laptop dashboard (watch/laptop.html) reads this from another origin; the key still guards it
+                self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(body)
 
