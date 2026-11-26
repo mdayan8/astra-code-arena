@@ -75,6 +75,7 @@ def detail_rows(rows):
 
 
 ALT = ("", " class='alt'")
+SPREAD = ("#ef4444", "#f97316", "#f59e0b", "#84cc16", "#22c55e")   # low -> high
 CSS = """
 body { font-family: sans-serif; font-size: 9pt; color: #1f2430; }
 h2 { font-size: 11.5pt; color: #4c35c9; margin: 14pt 0 5pt 0; }
@@ -82,6 +83,16 @@ table { border-collapse: collapse; width: 100%; }
 th { background-color: #4c35c9; color: #ffffff; text-align: left; font-size: 8pt; padding: 4pt 5pt; }
 td { padding: 3.5pt 5pt; border-bottom: 1px solid #eceef3; font-size: 8.5pt; }
 .num { text-align: right; }
+.head td { border: none; padding: 0 0 8pt 0; vertical-align: middle; }
+.hc { text-align: center; }
+.col { font-size: 13pt; font-weight: bold; color: #1e1b4b; }
+.club { font-size: 8pt; color: #6d4aff; font-weight: bold; letter-spacing: 1.5pt; }
+.charts td { border: none; vertical-align: top; text-align: center; padding: 4pt; width: 33%; background-color: #fbfaff; }
+.ct { font-size: 9pt; font-weight: bold; color: #4c35c9; }
+.chart { font-size: 8pt; }
+.leg td, .charts .leg td { background-color: #fbfaff; border: none; border-bottom: 1px solid #eeeaff; padding: 2pt 3pt; text-align: left; width: auto; font-size: 8pt; }
+.charts .leg td.num { text-align: right; }
+.nw { white-space: nowrap; }
 .band td { background-color: #4c35c9; color: #ffffff; border: none; padding: 10pt 12pt; }
 .ttl { font-size: 19pt; font-weight: bold; color: #ffffff; }
 .bsub { font-size: 8.5pt; color: #ded8ff; }
@@ -101,6 +112,47 @@ td { padding: 3.5pt 5pt; border-bottom: 1px solid #eceef3; font-size: 8.5pt; }
 
 def pdf(c, comp):
     return render(comp, collect(c, comp), contest.fixed_total(c, comp["id"]) or comp["max_marks"])
+
+
+IMG = __import__("pathlib").Path(__file__).resolve().parent.parent / "static" / "img"
+COLLEGE = "PES Institute of Technology and Management, Shivamogga"
+PALETTE = ["#6d4aff", "#0ea5e9", "#22c55e", "#f59e0b", "#ec4899", "#14b8a6", "#ef4444", "#8b5cf6", "#84cc16", "#64748b"]
+
+
+def _rgb(h):
+    return tuple(int(h[i:i + 2], 16) / 255 for i in (1, 3, 5))
+
+
+def donut(values, colors, label=""):
+    """A donut chart as PNG bytes (drawn with pymupdf, no chart library). values: numbers, colors: '#rrggbb'."""
+    import pymupdf
+    doc = pymupdf.open()
+    pg = doc.new_page(width=220, height=220)
+    c, r = pymupdf.Point(110, 110), 100
+    tot = sum(v for v in values if v > 0)
+    sh = pg.new_shape()
+    if not tot:
+        sh.draw_circle(c, r); sh.finish(fill=_rgb("#e5e7eb"), color=None)
+    else:
+        start = -90.0
+        for v, col in zip(values, colors):
+            if v <= 0:
+                continue
+            ang = 360.0 * v / tot
+            if ang >= 359.99:
+                sh.draw_circle(c, r)
+            else:   # the slice as a polygon: centre, then points along the arc (clockwise from 12 o'clock)
+                import math
+                n = max(2, int(ang / 2))
+                sh.draw_polyline([c] + [c + (r * math.cos(math.radians(start + ang * k / n)), r * math.sin(math.radians(start + ang * k / n))) for k in range(n + 1)] + [c])
+            sh.finish(fill=_rgb(col), color=(1, 1, 1), width=2, closePath=True)
+            start += ang
+    sh.draw_circle(c, 58); sh.finish(fill=(1, 1, 1), color=None)
+    sh.commit()
+    if label:
+        w = pymupdf.get_text_length(label, fontname="helv", fontsize=26)
+        pg.insert_text((110 - w / 2, 119), label, fontname="helv", fontsize=26, color=_rgb("#1f2430"))
+    return pg.get_pixmap(dpi=220, alpha=True).tobytes("png")
 
 
 def render(comp, rows, fallback_total=100):
@@ -123,7 +175,15 @@ def render(comp, rows, fallback_total=100):
     cls = lambda sc: "hi" if float(sc) >= 0.7 * tf else "mid" if float(sc) >= 0.4 * tf else "lo"
     tile = lambda v, l, k: f"<td class='{k}'><span class='k'>{e(v)}</span><br/><span class='kl'>{e(l)}</span></td>"
     mins = lambda r: f"{r['minutes']} min" if r["minutes"] is not None else ""
-    body = [f"<table class='band'><tr><td><span class='ttl'>{e(comp['title'])}</span><br/><span class='bsub'>Results report &#183; {e(comp['code'])} &#183; "
+    arch = pymupdf.Archive()
+    club = IMG / "astra-club-logo.png" if (IMG / "astra-club-logo.png").exists() else IMG / "arena-logo.png"
+    for name, f in (("college.png", IMG / "pesitm-emblem.png"), ("club.png", club)):
+        if f.exists():
+            arch.add(f.read_bytes(), name)
+    logo = lambda n: f"<img src='{n}' width='54' height='54'/>" if arch.entry_list and any(n in str(x) for x in arch.entry_list) else ""
+    body = [f"<table class='head'><tr><td style='width:62pt'>{logo('college.png')}</td><td class='hc'><span class='col'>{e(COLLEGE)}</span><br/>"
+            f"<span class='club'>ASTRA CLUB &#183; CODE ARENA</span></td><td style='width:62pt;text-align:right'>{logo('club.png')}</td></tr></table>",
+            f"<table class='band'><tr><td><span class='ttl'>{e(comp['title'])}</span><br/><span class='bsub'>Results report &#183; {e(comp['code'])} &#183; "
             f"{e(clock(comp['start_at']))} &#183; {e(comp['duration_min'])} minutes &#183; {e(per)} questions per student &#183; {e(total)} marks"
             f"{' &#183; ended ' + e(clock(ended)) if ended else ''}</span></td></tr></table><p></p>",
             "<table class='tiles'><tr>" + tile(len(rows), "registered", "t1") + tile(len(done), "attempted", "t2") +
@@ -138,7 +198,7 @@ def render(comp, rows, fallback_total=100):
         k, lab = style.get(r["rank"], ("plain", f"{r['rank']}th"))
         body.append(f"<tr class='{k}'><td><b>{lab}</b></td><td><b>{e(r['name'])}</b></td><td>{e(r['participant_id'])}</td><td>{e(r['department'])}</td>"
                     f"<td class='num'><span class='{cls(r['score'])}'>{e(r['score'])}</span>{of(r)}</td>"
-                    f"<td class='num'>{e(r['solved'])} / {e(r['questions'])}</td><td class='num'>{mins(r)}</td></tr>")
+                    f"<td class='num'>{e(r['solved'])} / {e(r['questions'])}</td><td class='num nw'>{mins(r)}</td></tr>")
     if not done:
         body.append("<tr><td colspan='7'>No one has attempted yet.</td></tr>")
     body.append("</table>")
@@ -151,20 +211,37 @@ def render(comp, rows, fallback_total=100):
         body.append("<h2>Score spread</h2><table>")
         for i, n in enumerate(bins):
             lo_, hi_ = _n(tf * i / 5), _n(tf * (i + 1) / 5)
-            body.append(f"<tr><td style='width:22%'>{lo_} to {hi_}{'' if i < 4 else ''}</td><td class='bar'>{'&#9608;' * max(0, round(40 * n / top_n))}</td>"
+            body.append(f"<tr><td style='width:22%'>{lo_} to {hi_}{'' if i < 4 else ''}</td><td class='bar' style='color:{SPREAD[i]}'>{'&#9608;' * max(0, round(40 * n / top_n))}</td>"
                         f"<td class='num' style='width:16%'>{n} student{'s' if n != 1 else ''}</td></tr>")
         body.append("</table>")
     # by department
     depts = {}
     for r in rows:
-        depts.setdefault(r["department"] or "-", []).append(r)
+        depts.setdefault(r["department"] or "Not given", []).append(r)
+    order = sorted(depts.items(), key=lambda kv: -len(kv[1]))
+    dcol = {d: PALETTE[i % len(PALETTE)] for i, (d, _) in enumerate(order)}
+    if rows:
+        bands = [("70% or more", "#22c55e", sum(1 for x in scores if x >= 0.7 * tf)), ("40 to 70%", "#f59e0b", sum(1 for x in scores if 0.4 * tf <= x < 0.7 * tf)),
+                 ("Below 40%", "#ef4444", sum(1 for x in scores if x < 0.4 * tf)), ("Did not attempt", "#cbd5e1", len(rows) - len(done))]
+        charts = [("Students by department", [(d, dcol[d], len(rs)) for d, rs in order], str(len(rows))),
+                  ("Questions solved by department", [(d, dcol[d], sum(r["solved"] for r in rs)) for d, rs in order], str(sum(r["solved"] for r in rows))),
+                  ("Result bands", bands, f"{round(100 * len(done) / len(rows))}%")]
+        cells = []
+        for k, (title, parts, mid) in enumerate(charts):
+            arch.add(donut([v for _, _, v in parts], [c_ for _, c_, _ in parts], mid), f"chart{k}.png")
+            tot_ = sum(v for _, _, v in parts) or 1
+            legend = "".join(f"<tr><td class='lg'><span style='color:{c_}'>&#9632;</span> {e(n)}</td><td class='lg num'><b>{v}</b> <span class='kl'>{round(100 * v / tot_)}%</span></td></tr>"
+                             for n, c_, v in parts[:8] if v)
+            cells.append(f"<td class='chart'><span class='ct'>{e(title)}</span><br/><img src='chart{k}.png' width='104' height='104'/>"
+                         f"<table class='leg'>{legend or '<tr><td class=lg>none yet</td></tr>'}</table></td>")
+        body.append("<h2>Department contribution</h2><table class='charts'><tr>" + "".join(cells) + "</tr></table>")
     if len(depts) > 1 or rows:
         body.append("<h2>By department</h2><table><tr><th>Department</th><th class='num'>Registered</th><th class='num'>Attempted</th>"
                     "<th class='num'>Average</th><th class='num'>Best</th><th>Top student</th></tr>")
-        for j, (d, rs) in enumerate(sorted(depts.items(), key=lambda kv: -len(kv[1]))):
+        for j, (d, rs) in enumerate(order):
             sc = [float(r["score"]) for r in rs if r["attempted"]]
             best = min((r for r in rs if r["attempted"]), key=lambda r: r["rank"], default=None)
-            body.append(f"<tr{ALT[j % 2]}><td><b>{e(d)}</b></td><td class='num'>{len(rs)}</td><td class='num'>{len(sc)}</td>"
+            body.append(f"<tr{ALT[j % 2]}><td><span style='color:{dcol[d]}'>&#9632;</span> <b>{e(d)}</b></td><td class='num'>{len(rs)}</td><td class='num'>{len(sc)}</td>"
                         f"<td class='num'>{_n(statistics.mean(sc)) if sc else '-'}</td><td class='num'>{_n(max(sc)) if sc else '-'}</td>"
                         f"<td>{e(best['name']) if best else '-'}</td></tr>")
         body.append("</table>")
@@ -175,14 +252,14 @@ def render(comp, rows, fallback_total=100):
         body.append(f"<tr{ALT[j % 2]}><td>{e(r['rank'])}</td><td>{e(r['participant_id'])}</td><td>{e(r['name'])}</td><td>{e(r['department'])}</td>"
                     f"<td>{e(r['year'])}</td><td class='num'><span class='{cls(r['score']) if r['attempted'] else 'lo'}'>{e(r['score'])}</span>{of(r)}</td>"
                     f"<td class='num'>{e(r['pct'])}</td><td class='num'>{e(r['attempted'])}/{e(r['questions'])}</td><td class='num'>{e(r['solved'])}</td>"
-                    f"<td class='num'>{e(r['warnings'] or '')}</td><td class='num'>{mins(r) if r['attempted'] else e(r['status'])}</td></tr>")
+                    f"<td class='num'>{e(r['warnings'] or '')}</td><td class='num nw'>{mins(r) if r['attempted'] else e(r['status'])}</td></tr>")
     if not rows:
         body.append("<tr><td colspan='11'>No one registered.</td></tr>")
     body.append("</table><p class='note'>Scores: <span class='hi'>70% or more</span> &#183; <span class='mid'>40 to 70%</span> &#183; <span class='lo'>below 40%</span>. "
                 "Ranked by score; equal scores by time taken (plus penalty minutes for wrong attempts), then who reached the score first. "
                 "Every student's paper is worth the same total; harder questions carry more of it. Marks lost to fair-play warnings are already taken off. "
                 f"Generated {e(clock(db.now()))} by ASTRA Code Arena.</p>")
-    story = pymupdf.Story(html="".join(body), user_css=CSS)
+    story = pymupdf.Story(html="".join(body), user_css=CSS, archive=arch)
     buf = io.BytesIO()
     w = pymupdf.DocumentWriter(buf)
     page, where = pymupdf.paper_rect("a4"), pymupdf.paper_rect("a4") + (32, 32, -32, -36)
