@@ -177,7 +177,10 @@ def add_to_comp(c, cid, qid):
     comp = db.one(c, "SELECT status FROM competitions WHERE id=?", cid)
     if not comp or comp["status"] != "draft":
         return False
-    marks = (db.one(c, "SELECT marks FROM competition_questions WHERE competition_id=? ORDER BY ordinal LIMIT 1", cid) or {}).get("marks") or 10
+    from . import contest
+    q = db.one(c, "SELECT qv.qtype, q.difficulty FROM questions q JOIN question_versions qv ON qv.id=q.latest_version_id WHERE q.id=?", qid) or {}
+    marks = contest.weight(q.get("qtype"), q.get("difficulty")) if contest.fixed_total(c, cid) else \
+        ((db.one(c, "SELECT marks FROM competition_questions WHERE competition_id=? ORDER BY ordinal LIMIT 1", cid) or {}).get("marks") or 10)
     with db.tx(c):
         c.execute("UPDATE questions SET status='approved' WHERE id=?", (qid,))
         c.execute("INSERT OR IGNORE INTO competition_questions(competition_id,question_id,version_id,ordinal,marks) VALUES(?,?,"

@@ -796,6 +796,30 @@ def run():
     assert len(set(firsts)) == 5 and len(orders) == 5, firsts      # 5 students, same 5 questions, each starts on a different one
     evA.post(f"{A}/competitions/{cr['id']}/action", {"action": "end"})
     ok("same questions for everyone: rotated order, every student starts on a different question; number variants made instantly with answers proved by running")
+    easy_mcq = [x for x in mcqs if x["difficulty"] == "Easy"][:2]
+    sumq = next(x for x in s3.get(f"{BASE}/api/student/practice") if x["title"] == "Sum of Two Numbers")
+    cw = evA.post(f"{A}/competitions", {**base, "title": "Weighted", "code": "WEIGHTED", "start_at": int(time.time()) + 3600, "fixed_total": 100, "shuffle": False})
+    evA.put(f"{A}/competitions/{cw['id']}/questions", {"questions": [{"question_id": x["id"], "marks": 999} for x in [*easy_mcq, sumq]]})
+    cwd = evA.get(f"{A}/competitions/{cw['id']}")
+    assert cwd["fixed_total"] == 100 and sorted(q["marks"] for q in cwd["questions"]) == [10, 10, 25], [q["marks"] for q in cwd["questions"]]
+    evA.post(f"{A}/competitions/{cw['id']}/action", {"action": "publish"})
+    s3.post(f"{BASE}/api/student/competitions/{cw['id']}/join")
+    evA.post(f"{A}/competitions/{cw['id']}/action", {"action": "start"})
+    ar = s3.get(f"{BASE}/api/student/competitions/{cw['id']}/arena")
+    shown = {p["id"]: p["marks"] for p in ar["problems"]}
+    assert abs(sum(shown.values()) - 100) < 0.5 and shown[sumq["id"]] == 55.6, shown      # the paper adds up to 100; coding is worth more
+    right = sup.get(f"{A}/questions/{easy_mcq[0]['id']}")["references"]["answer"]
+    time.sleep(5.1)
+    r = s3.post(f"{BASE}/api/student/submissions", {"competition_id": cw["id"], "question_id": easy_mcq[0]["id"], "language": "answer", "code": right, "kind": "submit"})
+    assert wait_sub(s3, r["id"])["verdict"] == "AC"
+    time.sleep(5.1)
+    r = s3.post(f"{BASE}/api/student/submissions", {"competition_id": cw["id"], "question_id": sumq["id"], "language": "c", "kind": "submit",
+                                                    "code": "#include <stdio.h>\nint main(){long a,b;scanf(\"%ld %ld\",&a,&b);printf(\"%ld\\n\",a+b);return 0;}\n"})
+    assert wait_sub(s3, r["id"])["verdict"] == "AC"
+    me = next(x for x in s3.get(f"{BASE}/api/competitions/{cw['id']}/leaderboard")["rows"] if x["me"])
+    assert abs(me["score"] - 77.78) < 0.05, me["score"]                                    # (10 + 25) / 45 x 100
+    evA.post(f"{A}/competitions/{cw['id']}/action", {"action": "end"})
+    ok("fixed 100 marks per student shared by rule-based weight (easy MCQ 10, easy coding 25 -> 22.2 / 22.2 / 55.6); score scaled to the student's own paper")
     qr = evA.post(f"{A}/competitions/quick", {"mcq": 2, "coding": 1, "minutes": 10})
     qc = evA.get(f"{A}/competitions/{qr['id']}")
     assert qc["status"] == "live" and len(qc["questions"]) == 3 and qc["allow_late_join"] and qr["code"].startswith("TEST-")
@@ -860,7 +884,7 @@ def run():
     assert multi["found"]["total"] == 4 + 5 and multi["found"]["mcq_ready"] == 9 and multi["name"] == "2 files", multi["found"]   # numbering restarts per file
     say = evA.post(f"{A}/competitions/{cfile['id']}/assistant", {"message": "6 questions per student, 2 fix the bug and 4 mcq, total 60 marks, 30 minutes"})
     cfa = evA.get(f"{A}/competitions/{cfile['id']}")
-    assert cfa["draw"] == 6 and cfa["duration_min"] == 30 and cfa["max_marks"] == 60 and {q["marks"] for q in cfa["questions"]} == {10}, (cfa["draw"], say)
+    assert cfa["draw"] == 6 and cfa["duration_min"] == 30 and cfa["max_marks"] == 60 and cfa["fixed_total"] == 60 and {q["marks"] for q in cfa["questions"]} == {10}, (cfa["draw"], say)
     chat = evA.post(f"{A}/assistant/competition", {"message": "45 minute quiz for 2nd years, 4 questions per student", "ref": paper["ref"]})
     assert chat["file"]["total"] == 12 and chat["plan"]["per_student"] == 4 and not chat["plan"].get("questions"), chat["plan"]
     made = evA.post(f"{A}/assistant/competition", {"message": "", "plan": chat["plan"], "create": True, "ref": paper["ref"], "use_file": True})

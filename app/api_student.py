@@ -488,13 +488,15 @@ def arena(comp_id: int, u=Depends(student), c=Depends(conn)):
     byid = {q["question_id"]: q for q in db.all_(c, "SELECT cq.question_id, cq.marks, cq.ordinal, qv.* FROM competition_questions cq JOIN question_versions qv ON qv.id=cq.version_id "
                                                  "WHERE cq.competition_id=?", comp_id)}
     qs = [byid[i] for i in contest.assigned(c, comp, u["id"]) if i in byid]
+    fixed = contest.fixed_total(c, comp_id)
+    scale = fixed / (sum(q["marks"] for q in qs) or 1) if fixed else 1
     best = {r["question_id"]: r for r in db.all_(c, "SELECT question_id, MAX(score) AS best, MAX(verdict='AC') AS ac, COUNT(*) AS tries FROM submissions "
                                                      "WHERE competition_id=? AND user_id=? AND kind='submit' AND status='done' GROUP BY question_id", comp_id, u["id"])}
     langs = db.jl(comp["languages"])
     problems = []
     for i, q in enumerate(qs):
         b = best.get(q["question_id"], {})
-        pl = problem_payload(c, q, {"id": q["question_id"], "label": chr(65 + i), "marks": q["marks"], "best": b.get("best") or 0,
+        pl = problem_payload(c, q, {"id": q["question_id"], "label": chr(65 + i), "marks": round(q["marks"] * scale, 1), "best": round((b.get("best") or 0) * scale, 2),
                                     "solved": bool(b.get("ac")), "tries": b.get("tries") or 0})
         if pl["options"] and comp["shuffle"]:
             pl["options"] = contest.shuffled_options(pl["options"], u["id"], q["question_id"])
@@ -525,7 +527,7 @@ def finish(comp_id: int, req: Request, u=Depends(student), c=Depends(conn)):
     lb = contest.leaderboard(c, comp, fresh=True)   # their own final score must include the last submission
     me = next((r for r in lb["rows"] if r["user_id"] == u["id"]), None)
     return {"ok": True, "score": me["score"] if me else 0, "solved": me["solved"] if me else 0, "rank": me["rank"] if me else None,
-            "of": len(lb["rows"]), "max": sum(q["marks"] for q in lb["questions"] if q["id"] in set(contest.assigned(c, comp, u["id"])))}
+            "of": len(lb["rows"]), "max": contest.fixed_total(c, comp_id) or sum(q["marks"] for q in lb["questions"] if q["id"] in set(contest.assigned(c, comp, u["id"])))}
 
 
 @router.get("/api/student/practice")

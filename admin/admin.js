@@ -304,7 +304,8 @@ async function compForm(id) {
         ${fld('Tie-break', sel('sc_tie_break', [['penalty', 'Penalty time (time + wrong attempts)'], ['time', 'Earliest time to reach score']], sc.tie_break, locked ? 'disabled' : ''))}</div>
       <div class="grid g3">${fld('Negative marks per wrong submission', inp('sc_negative_marks', sc.negative_marks, `type=number min=0 step=0.5 ${locked ? 'disabled' : ''}`), '0 = off')}${fld('First-correct bonus', inp('sc_first_blood_bonus', sc.first_blood_bonus, `type=number min=0 ${locked ? 'disabled' : ''}`), '0 = off')}
         ${fld('Penalty minutes per wrong attempt', inp('sc_penalty_minutes', sc.penalty_minutes, `type=number min=0 ${locked ? 'disabled' : ''}`), 'tie-break only')}</div>
-      <div class="grid g3">${fld('Marks lost per fair-play warning', `<div class="row" style="gap:6px;flex-wrap:nowrap">${inp('sc_violation_pct', sc.violation_pct ?? 5, `type=number min=0 max=50 step=0.5 style="width:100px" ${locked ? 'disabled' : ''}`)}<span class="small muted">% of the student's maximum</span></div>`, 'Leaving the test, leaving full screen or using the internet. 0 = no deduction.')}</div>
+      <div class="grid g3">${fld('Marks per student', inp('fixed_total', c.fixed_total || '', 'type=number min=0 max=10000 placeholder="e.g. 100"'), 'Every student\'s paper adds up to this, shared by weight: harder and coding questions count more. Empty = marks as set per question.')}
+        ${fld('Marks lost per fair-play warning', `<div class="row" style="gap:6px;flex-wrap:nowrap">${inp('sc_violation_pct', sc.violation_pct ?? 5, `type=number min=0 max=50 step=0.5 style="width:100px" ${locked ? 'disabled' : ''}`)}<span class="small muted">% of the student's maximum</span></div>`, 'Leaving the test, leaving full screen or using the internet. 0 = no deduction.')}</div>
       <div class="grid g3">${fld('Leaderboard visibility', sel('leaderboard_visibility', [['live', 'Live during the contest'], ['after_end', 'Automatically when it ends'], ['hidden', 'Manually: I publish results']], c.leaderboard_visibility))}
         ${fld('Fair-play paste policy', sel('paste_policy', [['log', 'Allow paste, record it'], ['block_external', 'Block pastes from outside the editor'], ['allow', 'Allow, do not flag']], c.paste_policy))}
         <div class="fcheck">${chk('show_test_counts', c.show_test_counts, 'Show students how many tests passed')}</div></div>
@@ -348,7 +349,7 @@ async function compForm(id) {
     const f = formData($('#cf'));
     const b = { ...f, eligible_departments: f.eligible_departments || [], eligible_years: f.eligible_years || [], languages: locked ? c.languages : (f.languages || []),
       scoring: locked ? c.scoring : { mode: f.sc_mode, tie_break: f.sc_tie_break, negative_marks: f.sc_negative_marks || 0, first_blood_bonus: f.sc_first_blood_bonus || 0, penalty_minutes: f.sc_penalty_minutes ?? 10, violation_pct: f.sc_violation_pct ?? 5 },
-      draw: locked ? c.draw : (f.draw || 0), shuffle: locked ? c.shuffle : !!f.shuffle, ai_pool: !!f.ai_pool,
+      draw: locked ? c.draw : (f.draw || 0), shuffle: locked ? c.shuffle : !!f.shuffle, ai_pool: !!f.ai_pool, fixed_total: Number(f.fixed_total || 0),
       start_at: locked ? c.start_at : (f.start_at || null), duration_min: locked ? c.duration_min : f.duration_min, reg_start: null, reg_end: null };
     Object.keys(b).filter((k) => k.startsWith('sc_')).forEach((k) => delete b[k]);
     b.lockdown = { internet: f.ld_internet, fullscreen: f.ld_fullscreen, leave: f.ld_leave, max_violations: f.ld_max_violations || 0, no_copy: !!f.ld_no_copy, no_paste: !!f.ld_no_paste };
@@ -459,6 +460,7 @@ function compOverview(T, c) {
       <section class="card pad"><dl class="kv"><dt>Schedule</dt><dd>${fmtTime(c.start_at)} ${ico('right')} ${fmtTime(c.end_at)} (${fmtMins(c.duration_min)}${c.extra_min ? ` + ${c.extra_min} extended` : ''}${c.paused_total_sec ? `, paused ${fmtDur(c.paused_total_sec)}` : ''})${c.auto_start ? ' · auto-start' : ''}</dd>
         <dt>Joining</dt><dd>${c.registration_mode === 'open' ? 'Students join themselves' : 'Organisers add students'}${c.allow_late_join ? ', also after the start' : ', until the start'}</dd>
         <dt>Questions</dt><dd>${c.draw ? `${c.draw} per student from ${c.questions.length}` : `All ${c.questions.length} for everyone`}${c.shuffle ? ' · shuffled per student' : ''}</dd>
+        <dt>Marks</dt><dd>${c.fixed_total ? `${c.fixed_total} per student, shared by weight (easy multiple choice counts least, hard coding most)` : 'As set on each question'}</dd>
         <dt>Student link</dt><dd class="row" style="gap:6px"><input class="input mono small" readonly id="shareLink" value="${esc(location.origin + '/#/c/' + encodeURIComponent(c.code))}" style="flex:1;min-width:0" onclick="this.select()"><button class="btn sm" type="button" onclick="const i=document.getElementById('shareLink');i.select();document.execCommand('copy');toast('Link copied: share it with students','ok')">${ico('copy', 13)} Copy</button></dd>
         <dt>Lockdown</dt><dd>${ldText(c.lockdown)}</dd>
         <dt>Eligibility</dt><dd>Years ${c.eligible_years.join(', ') || 'all'} · ${c.eligible_departments.join(', ') || 'all departments'}</dd><dt>Languages</dt><dd>${c.languages.map(langName).join(', ')}</dd>

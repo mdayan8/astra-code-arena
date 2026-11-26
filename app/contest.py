@@ -61,6 +61,30 @@ def variety(pool, n, shuffle):
 KIND = {"standard": "coding", "complete": "coding", "debug": "debug", "mcq": "mcq", "output": "output", "trace": "trace", "prompt": "prompt"}
 
 
+# Rule-based weight of a question: how much of a student's fixed total it is worth, relative to the others in their paper.
+KIND_WEIGHT = {"mcq": 1.0, "output": 1.0, "trace": 1.25, "prompt": 1.5, "complete": 1.5, "debug": 2.0, "standard": 2.5}
+LEVEL_WEIGHT = {"Easy": 1.0, "Intermediate": 1.5, "Challenging": 2.0}
+
+
+def weight(qtype, difficulty):
+    return round(10 * KIND_WEIGHT.get(qtype or "standard", 2.0) * LEVEL_WEIGHT.get(difficulty or "Easy", 1.0))
+
+
+def apply_weights(c, cid):
+    """Raw marks of every question in a competition from its kind and level (scaled to the fixed total per student when scoring)."""
+    for q in db.all_(c, "SELECT cq.question_id, qv.qtype, q.difficulty FROM competition_questions cq JOIN question_versions qv ON qv.id=cq.version_id "
+                        "JOIN questions q ON q.id=cq.question_id WHERE cq.competition_id=?", cid):
+        c.execute("UPDATE competition_questions SET marks=? WHERE competition_id=? AND question_id=?", (weight(q["qtype"], q["difficulty"]), cid, q["question_id"]))
+
+
+def fixed_total(c, cid):
+    """Marks every student's paper adds up to (e.g. 100), or 0 when marks are used as entered."""
+    try:
+        return float(db.setting(c, f"fixedtotal:{cid}", "0") or 0)
+    except ValueError:
+        return 0.0
+
+
 def draw_mix(pool, n, mix, shuffle, rng):
     """Exactly the asked number of each kind for every student (e.g. 6 fix-the-bug + 4 multiple choice); any shortfall is
     filled from the rest of the list so everyone still gets n questions."""
@@ -235,6 +259,7 @@ def compute_leaderboard(c, comp):
     marks = {q["question_id"]: q["marks"] for q in qs}
     parts = db.all_(c, "SELECT cp.user_id, cp.status, u.name, u.avatar, s.participant_id, s.department, s.year FROM competition_participants cp "
                        "JOIN users u ON u.id=cp.user_id LEFT JOIN students s ON s.user_id=u.id WHERE cp.competition_id=?", comp["id"])
+    fixed = fixed_total(c, comp["id"])
     mine = {r["user_id"]: db.jl(r["questions"]) for r in db.all_(c, "SELECT user_id, questions FROM competition_participants WHERE competition_id=? AND questions IS NOT NULL", comp["id"])}
     warns = {r["user_id"]: r["n"] for r in db.all_(c, "SELECT a.user_id, COUNT(*) AS n FROM activity_events a WHERE a.competition_id=? AND a.type='violation' AND a.created_at >= "
                                                      "COALESCE((SELECT MAX(r.created_at) FROM activity_events r WHERE r.competition_id=a.competition_id AND r.user_id=a.user_id AND r.type='reopened'), 0) "
@@ -284,8 +309,15 @@ def compute_leaderboard(c, comp):
                 penalty += mins + st["wrong_before_best"] * cfg["penalty_minutes"]
                 last = max(last, st["best_at"])
             per[str(q["question_id"])] = {"score": round(sc, 2), "ac": st["ac"], "tries": st["tries"]}
+        own_max = sum(marks[i] for i in own if i in marks) or 1
+        if fixed:   # every paper is worth the same: scale this student's marks so their own questions add up to the fixed total
+            k = fixed / own_max
+            total = total * k
+            for v in per.values():
+                v["score"] = round(v["score"] * k, 2)
+            own_max = fixed
         n_warn = warns.get(p["user_id"], 0)
-        cut = round(min(total, n_warn * float(cfg.get("violation_pct") or 0) / 100 * sum(marks[i] for i in own)), 2) if n_warn else 0
+        cut = round(min(total, n_warn * float(cfg.get("violation_pct") or 0) / 100 * own_max), 2) if n_warn else 0
         total -= cut
         rows.append({"user_id": p["user_id"], "name": p["name"], "avatar": avatar_url(p["user_id"], p["avatar"]), "participant_id": p["participant_id"], "department": p["department"],
                      "year": p["year"], "score": round(total, 2), "solved": solved, "penalty": int(penalty), "last": last, "per": per,

@@ -305,6 +305,7 @@ class CompIn(BaseModel):
     shuffle: bool = True                          # each student sees the questions (and multiple-choice options) in their own order
     ai_pool: bool = True                          # while students register, the AI adds checked variants of these questions
     ai_prompt: str = Field(default="", max_length=1000)   # what the AI should write for this competition's pool
+    fixed_total: int = Field(default=0, ge=0, le=10000)   # every student's paper is worth this many marks (shared by weight); 0 = marks as entered
 
 
 def comp_values(b: CompIn):
@@ -329,7 +330,14 @@ def comp_values(b: CompIn):
             "languages": json.dumps(langs), "max_marks": b.max_marks, "scoring": json.dumps(sc), "leaderboard_visibility": b.leaderboard_visibility,
             "show_test_counts": int(b.show_test_counts), "allow_late_join": int(b.allow_late_join), "auto_start": int(b.auto_start),
             "paste_policy": b.paste_policy, "lockdown": json.dumps(contest.lockdown_cfg(b.lockdown)),
-            "draw": b.draw, "shuffle": int(b.shuffle), "ai_pool": int(b.ai_pool), "ai_prompt": b.ai_prompt.strip()}
+            "draw": b.draw, "shuffle": int(b.shuffle), "ai_pool": int(b.ai_pool), "ai_prompt": b.ai_prompt.strip(),
+            **({"max_marks": b.fixed_total} if b.fixed_total else {})}
+
+
+def save_fixed_total(c, cid, total):
+    db.set_setting(c, f"fixedtotal:{cid}", str(total or 0))
+    if total:
+        contest.apply_weights(c, cid)
 
 
 def comp_full(c, comp):
@@ -348,6 +356,7 @@ def comp_full(c, comp):
     from . import pool
     d["pool"] = pool.info(c, comp["id"])
     d["explain"] = db.setting(c, f"explain:{comp['id']}", "1") == "1"
+    d["fixed_total"] = contest.fixed_total(c, comp["id"])
     d["variety"] = contest.variety(db.all_(c, "SELECT q.difficulty, qv.qtype FROM competition_questions cq JOIN questions q ON q.id=cq.question_id "
                                               "JOIN question_versions qv ON qv.id=cq.version_id WHERE cq.competition_id=?", comp["id"]), comp["draw"] or 0, bool(comp["shuffle"]))
     d["submission_count"] = db.one(c, "SELECT COUNT(*) AS n FROM submissions WHERE competition_id=? AND kind='submit'", comp["id"])["n"]
@@ -395,6 +404,7 @@ def create_comp(body: CompIn, req: Request, u=Depends(admin), c=Depends(conn)):
                         (*v.values(), u["id"], t, t)).lastrowid
         c.execute("INSERT INTO competition_admins(competition_id,user_id) VALUES(?,?)", (cid, u["id"]))
         audit(c, u, "competition.create", "competition", cid, cid, {"code": v["code"]}, client_ip(req))
+        save_fixed_total(c, cid, body.fixed_total)
     return comp_full(c, contest.get_comp(c, cid))
 
 
@@ -479,11 +489,11 @@ def assistant_competition(body: AssistIn, req: Request, u=Depends(admin), c=Depe
     if mix and asked and sum(mix.values()) <= asked:   # "6 fix the bug and 4 mcq" per student: exactly that mix for everyone
         db.set_setting(c, f"mix:{comp['id']}", json.dumps(mix))
     total = int(plan.get("total_marks") or 100)
-    if total:   # total marks (100 unless said otherwise) split evenly over what each student answers
-        per_q = max(1, round(total / max(1, asked or have or 1)))
-        c.execute("UPDATE competition_questions SET marks=? WHERE competition_id=?", (per_q, comp["id"]))
+    if total:   # every student's paper is worth `total` (100 unless said otherwise); questions share it by weight
+        contest.apply_weights(c, comp["id"])
+        db.set_setting(c, f"fixedtotal:{comp['id']}", str(total))
         c.execute("UPDATE competitions SET max_marks=? WHERE id=?", (total, comp["id"]))
-        out["marks_each"] = per_q
+        out["total_marks"] = total
     out["have"], out["asked"] = have, asked
     out.update(created={"id": comp["id"], "title": title, "code": code})
     return out
@@ -575,6 +585,8 @@ def update_comp(cid: int, body: CompIn, req: Request, u=Depends(admin), c=Depend
             v.pop(k)
     with db.tx(c):
         c.execute(f"UPDATE competitions SET {','.join(k + '=?' for k in v)}, updated_at=? WHERE id=?", (*v.values(), db.now(), cid))
+        if comp["status"] == "draft":
+            save_fixed_total(c, cid, body.fixed_total)
         audit(c, u, "competition.update", "competition", cid, cid, {k: v[k] for k in v if k not in ("instructions", "description")}, client_ip(req))
     return comp_full(c, contest.get_comp(c, cid))
 
@@ -597,6 +609,8 @@ def set_questions(cid: int, body: QuestionsIn, req: Request, u=Depends(admin), c
             c.execute("INSERT INTO competition_questions(competition_id,question_id,version_id,ordinal,marks) VALUES(?,?,?,?,?)",
                       (cid, row["id"], row["latest_version_id"], i, max(1, int(q.get("marks") or 100))))
         audit(c, u, "competition.questions", "competition", cid, cid, {"questions": [q["question_id"] for q in body.questions]}, client_ip(req))
+    if contest.fixed_total(c, cid):   # the question list changed: weights follow
+        contest.apply_weights(c, cid)
     return comp_full(c, contest.get_comp(c, cid))
 
 
@@ -1095,13 +1109,12 @@ def comp_assistant(cid: int, body: CompChatIn, req: Request, u=Depends(admin), c
         done.append(f"The AI is writing {writing} more question(s) for this round; checked ones join by themselves")
     elif specs and not ai.enabled():
         done.append("Not enough questions of some kinds and the AI is off: add them from the bank or a file")
-    total = int(p.get("total_marks") or 0) or (100 if per or specs else 0)
+    total = int(p.get("total_marks") or 0) or (int(contest.fixed_total(c, cid)) or 100 if per or specs else 0)
     if total:
-        each = max(1, round(total / max(1, per or db.one(c, "SELECT draw FROM competitions WHERE id=?", cid)["draw"] or
-                                            db.one(c, "SELECT COUNT(*) AS n FROM competition_questions WHERE competition_id=?", cid)["n"] or 1)))
-        c.execute("UPDATE competition_questions SET marks=? WHERE competition_id=?", (each, cid))
+        contest.apply_weights(c, cid)
+        db.set_setting(c, f"fixedtotal:{cid}", str(total))
         c.execute("UPDATE competitions SET max_marks=? WHERE id=?", (total, cid))
-        done.append(f"Total {total} marks: {each} per question")
+        done.append(f"Every student's paper is worth {total} marks, shared by weight: harder questions and coding / fix-the-bug count more than an easy multiple choice")
     audit(c, u, "competition.assistant", "competition", cid, cid, {"message": body.message[:300]}, client_ip(req))
     return {"done": done or ["I did not find anything to change. Try: '10 questions per student, 6 fix the bug and 4 mcq, total 100 marks'."]}
 
@@ -1966,6 +1979,8 @@ def import_file(c, u, tok, comp, difficulty="Easy", category="", per_student=0, 
             total = db.one(c, "SELECT COUNT(*) AS n FROM competition_questions WHERE competition_id=?", comp["id"])["n"]
             per = per_student or 0   # kept even while the list is still smaller: questions added later then make different papers
             c.execute("UPDATE competitions SET draw=?, updated_at=? WHERE id=?", (per, db.now(), comp["id"]))
+            if contest.fixed_total(c, comp["id"]):
+                contest.apply_weights(c, comp["id"])
         audit(c, u, "questions.from_file", detail={"ready": len(ready), "drafts": len(drafts), "competition_id": comp["id"] if comp else None},
               ip=client_ip(req) if req else None)
     return {"ready": len(ready), "drafts": len(drafts), "draft_ids": drafts[:200], "competition_id": comp["id"] if comp else None,
