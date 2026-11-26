@@ -62,7 +62,7 @@ function assistantCard(after) {
   const show = (r) => {
     plan = r.plan;
     say('bot', `<dl class="kv tight">${r.lines.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
-      ${r.questions.length ? `<div class="small" style="font-weight:600;margin:10px 0 4px">Questions (${r.questions.length})</div><div class="asst-qs">${r.questions.map((q, i) => `<div class="row between"><span><b>${String.fromCharCode(65 + i)}.</b> ${esc(q.title)}</span><span class="row" style="gap:4px"><span class="badge">${TY[q.qtype] || q.qtype}</span><span class="badge ${{ Easy: 'green', Intermediate: 'amber', Challenging: 'red' }[q.difficulty]}">${q.difficulty}</span></span></div>`).join('')}</div>` : ''}
+      ${r.questions.length ? `<div class="small" style="font-weight:600;margin:10px 0 4px">Questions (${r.questions.length})</div><div class="asst-qs">${r.questions.map((q, i) => `<div class="row between"><span><b>${lab(i)}.</b> ${esc(q.title)}</span><span class="row" style="gap:4px"><span class="badge">${TY[q.qtype] || q.qtype}</span><span class="badge ${{ Easy: 'green', Intermediate: 'amber', Challenging: 'red' }[q.difficulty]}">${q.difficulty}</span></span></div>`).join('')}</div>` : ''}
       ${r.problems.map((x) => `<div class="notice warn small" style="margin-top:8px">${esc(x)}</div>`).join('')}${r.todo.map((x) => `<div class="small muted" style="margin-top:6px">${esc(x)}</div>`).join('')}
       ${(r.ask || []).map((x) => `<div class="asst-ask"><b>${esc(x.q)}</b><div class="row wrap" style="gap:6px;margin-top:6px">${x.chips.map((ch) => `<button type="button" class="chipbtn" data-reply="${esc(ch)}">${esc(ch)}</button>`).join('')}</div></div>`).join('')}
       ${r.filling ? `<div class="notice ok small" style="margin-top:8px">The AI is writing ${r.filling.started} question(s). They appear in <a href="#/ai">AI Studio</a> for you to approve; then come back and press "Pick different questions".${r.filling.skipped.length ? ' It cannot write ' + esc(r.filling.skipped.join(', ')) + ' questions: add those by hand.' : ''}</div>`
@@ -411,7 +411,7 @@ function previewComp(c, publishing) {
     modal({ title: publishing ? 'Preview before publishing' : 'Student preview', size: 'wide', body: `<div class="notice info small" style="margin-bottom:12px">This is what students will see. Publishing pins the exact current version of each question.</div>
       <h2>${esc(c.title)}</h2><div class="row small muted" style="margin-bottom:10px"><span class="mono">${esc(c.code)}</span> · Round ${c.round_no} · ${fmtTime(c.start_at)} · ${fmtMins(c.duration_min)} · ${c.languages.map(langName).join(', ')}</div>
       ${c.description ? `<div class="prose">${md(c.description)}</div>` : ''}${c.instructions ? `<div class="card pad prose" style="margin:12px 0">${md(c.instructions)}</div>` : ''}
-      <h3>Problems</h3>${c.questions.map((q, i) => `<div class="row" style="padding:6px 0;border-bottom:1px solid var(--border)"><b>${String.fromCharCode(65 + i)}.</b><span class="grow">${esc(q.title)} <span class="tiny muted">v${q.version_no}</span></span>${q.q_status === 'approved' ? '<span class="badge green">approved</span>' : '<span class="badge red">not approved</span>'}${q.validated_at || q.latest_version_id !== q.version_id ? '' : '<span class="badge red">not validated</span>'}<b>${q.marks}</b></div>`).join('') || empty('No questions added')}`,
+      <h3>Problems</h3>${c.questions.map((q, i) => `<div class="row" style="padding:6px 0;border-bottom:1px solid var(--border)"><b>${lab(i)}.</b><span class="grow">${esc(q.title)} <span class="tiny muted">v${q.version_no}</span></span>${q.q_status === 'approved' ? '<span class="badge green">approved</span>' : '<span class="badge red">not approved</span>'}${q.validated_at || q.latest_version_id !== q.version_id ? '' : '<span class="badge red">not validated</span>'}<b>${q.marks}</b></div>`).join('') || empty('No questions added')}`,
       actions: publishing ? [{ label: 'Cancel', onClick: () => res(false) }, { label: 'Publish', kind: 'primary', onClick: () => res(true) }] : [{ label: 'Close', kind: 'primary', onClick: () => res(false) }] });
   });
 }
@@ -513,15 +513,25 @@ function addFromFile(c) {
   rp.bind(m.el);
 }
 
+const lab = (i) => (i >= 26 ? lab(Math.floor(i / 26) - 1) : '') + String.fromCharCode(65 + (i % 26));   // A..Z, AA, AB ...
+
 async function compQuestions(T, c) {
   $('#hdrActions').innerHTML = '';
   let list = c.questions.map((q) => ({ question_id: q.question_id, marks: q.marks, title: q.title, version_no: q.version_no, validated: !!q.validated_at, status: q.q_status, latest: q.latest_version_id === q.version_id, difficulty: q.difficulty }));
   const editable = c.status === 'draft';
+  const fixed = Number(c.fixed_total || 0);
+  const per = c.draw && c.draw < list.length ? c.draw : list.length;
+  const avgW = () => list.reduce((s, q) => s + Number(q.marks || 0), 0) / (list.length || 1);
+  const share = (q) => Math.round(Number(q.marks) * fixed / (per * avgW() || 1) * 10) / 10;   // about this much in a typical paper
+  const paperLine = () => fixed
+    ? `Each student: <b>${per}</b> of ${list.length} questions, paper worth <b>${fixed}</b> marks. The numbers below are weights; a question's marks = its weight x ${fixed} / the weights in that student's paper.`
+    : `${c.draw && c.draw < list.length ? `Each student: <b>${c.draw}</b> of ${list.length} questions · ` : ''}Total marks: <b>${list.reduce((s, q) => s + Number(q.marks || 0), 0)}</b>`;
   const draw = () => {
     T.innerHTML = `${editable ? '' : `<div class="notice small" style="margin-bottom:12px">Questions are pinned to the exact versions shown. Move the competition back to draft to change them.</div>`}
-      <div class="card"><div class="card-head"><h3>Question set</h3><div class="row"><span class="small muted">Total marks: <b>${list.reduce((s, q) => s + Number(q.marks || 0), 0)}</b></span>${editable ? '<button class="btn sm" id="addFile">+ From a file</button> <button class="btn sm" id="addQ">+ Add from bank</button><button class="btn primary sm" id="saveQ">Save question set</button>' : ''}</div></div>
-      <div class="card-body stack tight">${list.length ? list.map((q, i) => `<div class="qrow"><b>${String.fromCharCode(65 + i)}</b><div><a href="#/questions/${q.question_id}"><b>${esc(q.title)}</b></a> <span class="tiny muted">v${q.version_no}</span> ${diffBadge(q.difficulty)} ${qstatus(q.status)} ${q.validated ? '<span class="badge green">validated</span>' : '<span class="badge amber">needs validation</span>'}</div>
-        <input class="input" type="number" min="1" value="${q.marks}" data-mk="${i}" ${editable ? '' : 'disabled'} title="Marks">
+      <div class="card"><div class="card-head"><h3>Question set</h3><div class="row"><span class="small muted">${paperLine()}</span>${editable ? '<button class="btn sm" id="addFile">+ From a file</button> <button class="btn sm" id="addQ">+ Add from bank</button><button class="btn primary sm" id="saveQ">Save question set</button>' : ''}</div></div>
+      <div class="card-body stack tight">${list.length ? list.map((q, i) => `<div class="qrow"><b>${lab(i)}</b><div><a href="#/questions/${q.question_id}"><b>${esc(q.title)}</b></a> <span class="tiny muted">v${q.version_no}</span> ${diffBadge(q.difficulty)} ${qstatus(q.status)} ${q.validated ? '<span class="badge green">validated</span>' : '<span class="badge amber">needs validation</span>'}</div>
+        ${fixed ? `<span class="small" style="text-align:right;white-space:nowrap" title="Weight (set by type and level)">weight <b>${q.marks}</b><br><span class="muted">≈ ${share(q)} marks</span></span>`
+                : `<input class="input" type="number" min="1" value="${q.marks}" data-mk="${i}" ${editable ? '' : 'disabled'} title="Marks">`}
         <div class="row" style="gap:2px">${editable ? `<button class="btn xs ghost" data-up="${i}" title="Move up">${ico('up')}</button><button class="btn xs ghost" data-rm="${i}" title="Remove">${ico('x')}</button>` : ''}</div></div>`).join('') : empty('No questions yet', editable ? 'Add approved questions from the question bank.' : '')}</div></div>`;
     $$('[data-mk]').forEach((x) => x.oninput = () => { list[x.dataset.mk].marks = Number(x.value); });
     $$('[data-up]').forEach((b) => b.onclick = () => { const i = Number(b.dataset.up); if (i) { [list[i - 1], list[i]] = [list[i], list[i - 1]]; draw(); } });
@@ -602,9 +612,9 @@ async function compMonitor(T, c) {
   const load = async () => {
     const d = await GET(`${A}/competitions/${c.id}/monitor`).catch(() => null);
     if (!d || !$('#tab')) return;
-    const qmap = Object.fromEntries(c.questions.map((q, i) => [q.question_id, String.fromCharCode(65 + i)]));
+    const qmap = Object.fromEntries(c.questions.map((q, i) => [q.question_id, lab(i)]));
     T.innerHTML = `<div class="grid g4">${[['Status', badge(d.display_status)], ['Time left', `<span class="mono">${fmtDur(d.remaining_sec)}</span>`], ['Online now', `${d.online} / ${d.participants}<div class="tiny muted">${d.finished} finished</div>`], ['Judge queue', `${d.queue} · ${d.last_5min} subs in 5 min`]].map(([k, val]) => `<div class="card stat"><div class="k">${k}</div><div class="v" style="font-size:20px">${val}</div></div>`).join('')}</div>
-      <div class="grid g3" style="margin-top:16px">${c.questions.map((q, i) => { const pq = d.per_question.find((x) => x.question_id === q.question_id) || { attempts: 0, solvers: 0 }; return `<div class="card pad"><div class="small muted">${String.fromCharCode(65 + i)} · ${esc(q.title)}</div><div class="row between"><b style="font-size:20px">${pq.solvers}</b><span class="small muted">solved · ${pq.attempts} attempts</span></div><div class="bar"><i style="width:${d.participants ? pq.solvers / d.participants * 100 : 0}%"></i></div></div>`; }).join('')}</div>
+      <div class="grid g3" style="margin-top:16px">${c.questions.map((q, i) => { const pq = d.per_question.find((x) => x.question_id === q.question_id) || { attempts: 0, solvers: 0 }; return `<div class="card pad"><div class="small muted">${lab(i)} · ${esc(q.title)}</div><div class="row between"><b style="font-size:20px">${pq.solvers}</b><span class="small muted">solved · ${pq.attempts} attempts</span></div><div class="bar"><i style="width:${d.participants ? pq.solvers / d.participants * 100 : 0}%"></i></div></div>`; }).join('')}</div>
       <div class="grid g2" style="margin-top:16px;align-items:start"><section class="card"><div class="card-head"><h3>Submission feed</h3><span class="tiny muted">auto-refresh 5s</span></div>${d.feed.length ? `<table class="table"><tbody>${d.feed.map((s) => `<tr class="click" data-sub="${s.id}"><td class="mono small">${fmtClock(s.created_at)}</td><td>${esc(s.name)}</td><td>${qmap[s.question_id] || ''}</td><td class="small">${langName(s.language)}</td><td>${vbadge(s.verdict, s.status)}</td><td class="num">${s.score}</td></tr>`).join('')}</tbody></table>` : empty('No submissions yet')}</section>
       <section class="card"><div class="card-head"><h3>Fair-play flags</h3><a class="small" href="#/competitions/${c.id}?t=integrity">Full report ${ico('right')}</a></div>${d.flags.length ? `<table class="table"><tbody>${d.flags.map((f) => { const x = JSON.parse(f.detail || '{}') || {}; return `<tr class="click" data-u="${f.user_id}"><td class="mono small">${fmtClock(f.created_at)}</td><td>${esc(f.name)}</td><td><span class="badge ${f.type.includes('paste') ? 'amber' : 'red'}">${esc(f.type.replace('_', ' '))}</span></td><td class="small muted">${x.chars ? x.chars + ' chars' + (x.internal ? ' (internal)' : '') : ''}</td></tr>`; }).join('')}</tbody></table>` : empty('No flags')}</section></div>`;
     $$('[data-sub]', T).forEach((tr) => tr.onclick = () => subModal(Number(tr.dataset.sub)));

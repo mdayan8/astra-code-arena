@@ -2544,7 +2544,7 @@ def report(kind: str, req: Request, competition_id: int | None = None, semester_
                           "FROM competition_questions cq JOIN question_versions qv ON qv.id=cq.version_id LEFT JOIN submissions s ON s.competition_id=cq.competition_id "
                           "AND s.question_id=cq.question_id AND s.kind='submit' WHERE cq.competition_id=? GROUP BY cq.question_id ORDER BY cq.ordinal", competition_id)
         return csv_resp(f"{code}-question-performance.csv", ["#", "Question", "Marks", "Attempts", "Participants tried", "Solved by", "Avg score", "WA", "TLE", "RE", "CE"],
-                        [[chr(65 + r["ordinal"]), r["title"], r["marks"], r["attempts"], r["tried"], r["solved"], r["avg_score"], r["wa"], r["tle"], r["re"], r["ce"]] for r in rows])
+                        [[contest.label(i), r["title"], r["marks"], r["attempts"], r["tried"], r["solved"], r["avg_score"], r["wa"], r["tle"], r["re"], r["ce"]] for i, r in enumerate(rows)])
     if kind == "submissions":
         rows = db.all_(c, "SELECT s.id, s.created_at, st.participant_id, us.name, qv.title, s.language, s.verdict, s.score, s.passed, s.total, s.time_ms, s.memory_kb, s.ip "
                           "FROM submissions s JOIN users us ON us.id=s.user_id LEFT JOIN students st ON st.user_id=us.id JOIN question_versions qv ON qv.id=s.version_id "

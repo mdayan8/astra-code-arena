@@ -496,7 +496,7 @@ def arena(comp_id: int, u=Depends(student), c=Depends(conn)):
     problems = []
     for i, q in enumerate(qs):
         b = best.get(q["question_id"], {})
-        pl = problem_payload(c, q, {"id": q["question_id"], "label": chr(65 + i), "marks": round(q["marks"] * scale, 1), "best": round((b.get("best") or 0) * scale, 2),
+        pl = problem_payload(c, q, {"id": q["question_id"], "label": contest.label(i), "marks": round(q["marks"] * scale, 1), "best": round((b.get("best") or 0) * scale, 2),
                                     "solved": bool(b.get("ac")), "tries": b.get("tries") or 0})
         if pl["options"] and comp["shuffle"]:
             pl["options"] = contest.shuffled_options(pl["options"], u["id"], q["question_id"])
@@ -1005,7 +1005,7 @@ def review(comp_id: int, u=Depends(student), c=Depends(conn)):
         subs = db.all_(c, "SELECT * FROM submissions WHERE competition_id=? AND user_id=? AND question_id=? AND kind='submit' AND status='done' ORDER BY id", comp_id, u["id"], qid)
         best = max(subs, key=lambda s: (s["score"] or 0, s["id"]), default=None)
         last = subs[-1] if subs else None
-        item = {"label": chr(65 + i), "question_id": qid, "title": q["title"], "qtype": q["qtype"] or "standard", "statement": q["statement"], "marks": q["marks"],
+        item = {"label": contest.label(i), "question_id": qid, "title": q["title"], "qtype": q["qtype"] or "standard", "statement": q["statement"], "marks": q["marks"],
                 "attempts": len(subs), "best": best["score"] if best else 0, "solved": any(s["verdict"] == "AC" for s in subs),
                 "options": db.jl(q["options"]), "verdict": last["verdict"] if last else None}
         if last:

@@ -121,6 +121,11 @@ def draw_for(pool, n, shuffle, rng):
     return ids
 
 
+def label(i):
+    """A..Z, then AA, AB ... (chr(65 + 26) would be '[')."""
+    return (label(i // 26 - 1) if i >= 26 else "") + chr(65 + i % 26)
+
+
 def assigned(c, comp, uid, create=True):
     """The questions this student sees, in their order. Fixed at first look and stored, so a reload never changes it."""
     p = db.one(c, "SELECT questions FROM competition_participants WHERE competition_id=? AND user_id=?", comp["id"], uid)
@@ -350,7 +355,7 @@ def compute_leaderboard(c, comp):
         if key != prev:
             rank, prev = i + 1, key
         r["rank"] = rank
-    return {"questions": [{"id": q["question_id"], "label": chr(65 + i), "title": q["title"], "marks": q["marks"]} for i, q in enumerate(qs)],
+    return {"questions": [{"id": q["question_id"], "label": label(i), "title": q["title"], "marks": q["marks"]} for i, q in enumerate(qs)],
             "rows": rows, "tie_break": cfg["tie_break"]}
 
 
