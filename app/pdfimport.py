@@ -406,9 +406,14 @@ def find_mcq(block: str):
     return {"statement": stem, "options": options[:6], "answer": answer}
 
 
+FILE_MARK = "===== FILE:"
+
+
 def find_questions(text: str):
-    """Every question in a document, in order. Multiple choice is recognised with its options and answer;
-    anything else is kept as written for review."""
+    """Every question in a document (or several joined with FILE_MARK lines), in order. Multiple choice is recognised with
+    its options and answer; anything else is kept as written for review."""
+    if FILE_MARK in text:   # several files: numbering restarts in each, so each file is split on its own
+        return [q for part in re.split(r"(?m)^" + re.escape(FILE_MARK) + r".*$", text) if part.strip() for q in find_questions(part)]
     out = []
     for a, b in split_questions(text):
         block = text[a:b].strip()

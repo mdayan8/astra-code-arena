@@ -19,14 +19,14 @@ const MOD = { dashboard: 'Dashboard', competitions: 'Competitions', questions: '
 // Reference document for AI writing (PDF, Word, PowerPoint, text, image). Returns a small UI bound to `holder.ref`.
 function refPicker(holder, label = 'Attach reference') {
   const id = 'rf' + Math.random().toString(36).slice(2, 8);
-  const html = `<label class="btn sm refbtn" for="${id}" title="PDF, Word, PowerPoint, text or an image of notes or an old question paper">${ico('upload', 13)} ${label}</label>
-    <input type="file" id="${id}" hidden accept=".pdf,.docx,.odt,.pptx,.rtf,.txt,.md,.html,.htm,.c,.cpp,.py,.java,.png,.jpg,.jpeg,.webp"><span class="refchip" data-chip="${id}"></span>`;
+  const html = `<label class="btn sm refbtn" for="${id}" title="One or several files: PDF, Word, PowerPoint, text or images of notes or question papers">${ico('upload', 13)} ${label}</label>
+    <input type="file" id="${id}" hidden multiple accept=".pdf,.docx,.odt,.pptx,.rtf,.txt,.md,.html,.htm,.c,.cpp,.py,.java,.png,.jpg,.jpeg,.webp"><span class="refchip" data-chip="${id}"></span>`;
   const bind = (root) => {
     const inp = $('#' + id, root), chip = $(`[data-chip="${id}"]`, root);
     const draw = () => { chip.innerHTML = holder.ref ? `<span class="chip">${ico('file', 12)} ${esc(holder.refName)} · ${holder.refChars >= 1000 ? Math.round(holder.refChars / 1000) + 'k' : holder.refChars} characters read <button type="button" class="linkbtn" data-unref>${ico('x', 11)}</button></span>` : '';
       $('[data-unref]', chip)?.addEventListener('click', () => { holder.ref = ''; holder.found = null; holder.onFound?.(null); draw(); }); };
-    inp.onchange = async () => { const f = inp.files[0]; if (!f) return; const fd = new FormData(); fd.append('file', f);
-      chip.innerHTML = '<span class="small muted"><span class="spin" style="width:11px;height:11px"></span> Reading the document…</span>';
+    inp.onchange = async () => { const fs = [...inp.files]; if (!fs.length) return; const fd = new FormData(); fs.forEach((f) => fd.append('files', f));
+      chip.innerHTML = `<span class="small muted"><span class="spin" style="width:11px;height:11px"></span> Reading ${fs.length > 1 ? fs.length + ' files' : 'the document'}…</span>`;
       try { const r = await api('POST', `${A}/ai/reference`, fd); Object.assign(holder, { ref: r.ref, refName: r.name, refChars: r.chars, found: r.found }); draw();
         toast(`Read ${r.name}${r.found?.total ? `: ${r.found.total} questions found` : ''}.${r.warnings.length ? ' ' + r.warnings[0] : ''}`, 'ok'); holder.onFound?.(r); }
       catch (e) { holder.ref = ''; draw(); fail(e); } inp.value = ''; };
@@ -228,11 +228,24 @@ async function competitions() {
   const v = view('Competitions', skeleton(5));
   const rows = await GET(`${A}/competitions`);
   v.innerHTML = ph('Competitions', 'Every round is fully independent: its own questions, participants, submissions and results.', can('competitions') && ME.role !== 'reviewer' ? `<button class="btn" id="quickBtn">${ico('zap', 14)} Instant test round</button><a class="btn primary" href="#/competitions/new">+ New competition</a>` : '') +
-    `<div class="card">${rows.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Competition</th><th>Status</th><th>Starts</th><th>Duration</th><th>Languages</th><th class="num">Questions</th><th class="num">Participants</th></tr></thead><tbody>
-    ${rows.map((r) => `<tr class="click" data-id="${r.id}"><td><b>${esc(r.title)}</b><div class="tiny muted mono">${esc(r.code)}${r.round_no ? ' · Round ' + r.round_no : ''}${r.academic_year ? ' · ' + esc(r.academic_year) : ''}</div></td><td>${badge(r.display_status)}</td>
+    `<div class="card">${rows.length ? `${ME.role === 'super_admin' && rows.some((r) => ['draft', 'cancelled'].includes(r.status)) ? `<div class="row between bulkbar" style="padding:10px 14px;border-bottom:1px solid var(--border)">
+        <label class="check small"><input type="checkbox" id="selAll"> Select all drafts</label><button class="btn sm danger" id="bulkDel" disabled>${ico('x', 13)} Delete selected</button></div>` : ''}
+      <div class="table-wrap"><table class="table"><thead><tr><th style="width:34px"></th><th>Competition</th><th>Status</th><th>Starts</th><th>Duration</th><th>Languages</th><th class="num">Questions</th><th class="num">Participants</th></tr></thead><tbody>
+    ${rows.map((r) => `<tr class="click" data-id="${r.id}"><td onclick="event.stopPropagation()">${ME.role === 'super_admin' && ['draft', 'cancelled'].includes(r.status) ? `<input type="checkbox" data-pick="${r.id}" aria-label="Select ${esc(r.title)}">` : ''}</td><td><b>${esc(r.title)}</b><div class="tiny muted mono">${esc(r.code)}${r.round_no ? ' · Round ' + r.round_no : ''}${r.academic_year ? ' · ' + esc(r.academic_year) : ''}</div></td><td>${badge(r.display_status)}</td>
       <td class="small nowrap">${fmtTime(r.start_at)}</td><td class="small">${fmtMins(r.duration_min)}</td><td class="small">${r.languages.map(langName).join(', ')}</td><td class="num">${r.questions}</td><td class="num">${r.participants}</td></tr>`).join('')}</tbody></table></div>`
       : empty('No competitions yet', 'Create your first round. It starts as a draft so nothing is public until you publish.')}</div>`;
   $$('[data-id]', v).forEach((tr) => tr.onclick = () => nav('/competitions/' + tr.dataset.id));
+  const picks = () => $$('[data-pick]', v).filter((x) => x.checked);
+  const sync = () => { if ($('#bulkDel')) { const n = picks().length; $('#bulkDel').disabled = !n; $('#bulkDel').innerHTML = `${ico('x', 13)} Delete selected${n ? ` (${n})` : ''}`; } };
+  $$('[data-pick]', v).forEach((x) => x.onchange = sync);
+  if ($('#selAll')) $('#selAll').onchange = (e) => { $$('[data-pick]', v).forEach((x) => { x.checked = e.target.checked; }); sync(); };
+  if ($('#bulkDel')) $('#bulkDel').onclick = async () => {
+    const ids = picks().map((x) => Number(x.dataset.pick));
+    if (!ids.length || !(await confirmBox(`Permanently delete ${ids.length} draft competition(s)? Their questions stay in the Question Bank. This cannot be undone.`, { danger: true, ok: `Delete ${ids.length}` }))) return;
+    let done = 0;
+    for (const id of ids) { try { await DEL(`${A}/competitions/${id}`); done++; } catch (e) { fail(e); } }
+    toast(`${done} competition(s) deleted`, 'ok'); goRoute();
+  };
   if (can('competitions') && ME.role !== 'reviewer') $('.card', v).before(assistantCard());
   if ($('#quickBtn')) $('#quickBtn').onclick = () => modal({ title: 'Instant test round', body: `<p class="small muted" style="margin-top:0">Starts right now with questions picked from the bank, so you can try the whole flow (join, solve, finish, leaderboard) from a student account in a minute.</p>
     <form class="stack" id="qr"><div class="grid g3">${fld('Multiple choice', '<input class="input" type="number" name="mcq" value="3" min="0" max="30">')}${fld('Coding', '<input class="input" type="number" name="coding" value="1" min="0" max="10">')}${fld('Minutes', '<input class="input" type="number" name="minutes" value="15" min="5" max="180">')}</div>

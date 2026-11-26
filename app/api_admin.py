@@ -1756,31 +1756,44 @@ REF_DIR = config.DATA_DIR / "ai-refs"
 
 
 @router.post("/ai/reference")
-async def ai_reference(req: Request, file: UploadFile = File(...), u=Depends(admin), c=Depends(conn)):
-    """Reference document for AI generation (notes, syllabus, an old question paper): PDF, Word, PowerPoint, text, images...
-    The text is extracted once and kept privately; prompts then use it as their source."""
+async def ai_reference(req: Request, file: UploadFile | None = File(None), files: list[UploadFile] = File(default=[]), u=Depends(admin), c=Depends(conn)):
+    """One or several documents (notes, syllabus, question papers): PDF, Word, PowerPoint, text, images...
+    The text is extracted once and kept privately; each file's questions are found separately (numbering restarts per file)."""
     need(u, "ai")
-    data = await file.read(config.MAX_UPLOAD_MB * 1024 * 1024 + 1)
-    try:
-        kind = pdfimport.validate_upload(data, file.filename or "")
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    if kind in ("zip", "xlsx"):
-        raise HTTPException(400, "Attach a single document (PDF, Word, PowerPoint, text or an image), not a ZIP or a spreadsheet.")
+    ups = ([file] if file else []) + list(files or [])
+    if not ups:
+        raise HTTPException(400, "Choose at least one file.")
+    if len(ups) > 20:
+        raise HTTPException(400, "Attach at most 20 files at once.")
     REF_DIR.mkdir(parents=True, exist_ok=True)
-    tok = secrets.token_hex(8)
-    src = REF_DIR / f"{tok}{Path(file.filename or 'x.txt').suffix.lower()}"
-    src.write_bytes(data)
-    try:
-        pages, warnings, n = await run_in_threadpool(pdfimport.extract_any, src, kind)
-    except Exception as e:
-        raise HTTPException(400, f"Could not read that document: {str(e)[:200]}")
-    finally:
-        src.unlink(missing_ok=True)
-    text = re.sub(r"[ \t]+", " ", re.sub(r"\n{3,}", "\n\n", "\n".join(pages))).strip()
+    tok, parts, warnings, n, names = secrets.token_hex(8), [], [], 0, []
+    for up in ups:
+        data = await up.read(config.MAX_UPLOAD_MB * 1024 * 1024 + 1)
+        try:
+            kind = pdfimport.validate_upload(data, up.filename or "")
+        except ValueError as e:
+            raise HTTPException(400, f"{up.filename}: {e}")
+        if kind in ("zip", "xlsx"):
+            raise HTTPException(400, f"{up.filename}: attach documents (PDF, Word, PowerPoint, text or images), not a ZIP or a spreadsheet.")
+        src = REF_DIR / f"{tok}-{len(parts)}{Path(up.filename or 'x.txt').suffix.lower()}"
+        src.write_bytes(data)
+        try:
+            pages, w, k = await run_in_threadpool(pdfimport.extract_any, src, kind)
+        except Exception as e:
+            raise HTTPException(400, f"Could not read {up.filename}: {str(e)[:200]}")
+        finally:
+            src.unlink(missing_ok=True)
+        t = re.sub(r"[ \t]+", " ", re.sub(r"\n{3,}", "\n\n", "\n".join(pages))).strip()
+        if len(t) >= 30:
+            parts.append(f"{pdfimport.FILE_MARK} {up.filename} =====\n{t}" if len(ups) > 1 else t)
+            names.append(up.filename or "document")
+        warnings += [f"{up.filename}: {x}" for x in w[:2]] if len(ups) > 1 else w
+        n += k
+    text = "\n\n".join(parts)
     if len(text) < 30:
-        raise HTTPException(400, "No readable text was found in that document. " + " ".join(warnings[:2]))
-    (REF_DIR / f"{tok}.txt").write_text(text[:200_000])
+        raise HTTPException(400, "No readable text was found in " + ("those documents. " if len(ups) > 1 else "that document. ") + " ".join(warnings[:2]))
+    (REF_DIR / f"{tok}.txt").write_text(text[:400_000])
+    file = type("F", (), {"filename": names[0] if len(names) == 1 else f"{len(names)} files"})()
     found = pdfimport.find_questions(text)
     audit(c, u, "ai.reference", detail={"file": (file.filename or "")[:120], "chars": len(text), "questions": len(found)}, ip=client_ip(req))
     return {"ref": tok, "name": (file.filename or "document")[:120], "chars": len(text), "pages": n, "preview": text[:400], "warnings": warnings[:3],

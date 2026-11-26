@@ -855,6 +855,9 @@ def run():
                                          "statement": "What is 6 + 6 in C?", "qtype": "mcq", "options": ["12", "13", "6", "41"], "answer": "12"})
     sup.post(f"{A}/questions/{tagged['id']}/status", {"status": "approved"})
     assert len(evA.get(f"{A}/competitions/{cfile['id']}")["questions"]) == 11   # approving an AI question written for this round adds it
+    two = [(f"part{k}.txt", "\n".join(f"{n}. Part {k} question {n}?\nA) yes\nB) no\nC) maybe\nD) never\nAnswer: A" for n in range(1, 4 + k)).encode()) for k in (1, 2)]
+    multi = sup.req("POST", f"{A}/ai/reference", files=[("files", (nm, data, "text/plain")) for nm, data in two])
+    assert multi["found"]["total"] == 4 + 5 and multi["found"]["mcq_ready"] == 9 and multi["name"] == "2 files", multi["found"]   # numbering restarts per file
     chat = evA.post(f"{A}/assistant/competition", {"message": "45 minute quiz for 2nd years, 4 questions per student", "ref": paper["ref"]})
     assert chat["file"]["total"] == 12 and chat["plan"]["per_student"] == 4 and not chat["plan"].get("questions"), chat["plan"]
     made = evA.post(f"{A}/assistant/competition", {"message": "", "plan": chat["plan"], "create": True, "ref": paper["ref"], "use_file": True})
