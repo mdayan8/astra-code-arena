@@ -460,9 +460,9 @@ def assistant_competition(body: AssistIn, req: Request, u=Depends(admin), c=Depe
         set_questions(comp["id"], QuestionsIn(questions=[{"question_id": q["id"], "marks": marks} for q in chosen]), req, u, c)
     if body.use_file and body.ref:   # every question from the attached paper, as written
         out["file_import"] = import_file(c, u, body.ref, contest.get_comp(c, comp["id"]), plan.get("level") or "Easy", title[:60],
-                                         body.per_student or int(plan.get("per_student") or 0), 10, req)
+                                         int(plan.get("per_student") or 0) or body.per_student, 10, req)
     # what was asked for: N per student, or the sum of the parts named in the chat
-    asked = body.per_student or int(plan.get("per_student") or 0) or sum(int(q.get("count") or 0) for q in plan.get("questions") or [])
+    asked = int(plan.get("per_student") or 0) or body.per_student or sum(int(q.get("count") or 0) for q in plan.get("questions") or [])
     have = db.one(c, "SELECT COUNT(*) AS n FROM competition_questions WHERE competition_id=?", comp["id"])["n"]
     out["writing"] = 0
     if asked and have < asked and ai.enabled():   # short: the AI writes the rest now (from the attached files if any); checked ones join by themselves
@@ -473,9 +473,14 @@ def assistant_competition(body: AssistIn, req: Request, u=Depends(admin), c=Depe
         for m in todo:
             out["writing"] += pool.spawn(c, u["id"], {**m, "difficulty": m.get("difficulty") or plan.get("level"), "comp_tag": tag,
                                                       "tests": plan.get("tests", False) if m.get("type") in (None, "standard", "debug") else None}, ref)
+    if asked and (body.per_student or plan.get("per_student") or plan.get("unique")):
+        c.execute("UPDATE competitions SET draw=? WHERE id=?", (asked, comp["id"]))
+    mix = {(q.get("type") or "standard"): int(q["count"]) for q in plan.get("questions") or [] if q.get("count")}
+    if mix and asked and sum(mix.values()) <= asked:   # "6 fix the bug and 4 mcq" per student: exactly that mix for everyone
+        db.set_setting(c, f"mix:{comp['id']}", json.dumps(mix))
     total = int(plan.get("total_marks") or 100)
     if total:   # total marks (100 unless said otherwise) split evenly over what each student answers
-        per_q = max(1, round(total / max(1, (body.per_student or int(plan.get("per_student") or 0)) or have or asked or 1)))
+        per_q = max(1, round(total / max(1, asked or have or 1)))
         c.execute("UPDATE competition_questions SET marks=? WHERE competition_id=?", (per_q, comp["id"]))
         c.execute("UPDATE competitions SET max_marks=? WHERE id=?", (total, comp["id"]))
         out["marks_each"] = per_q
@@ -1043,6 +1048,62 @@ def grade_saved(cid: int, req: Request, u=Depends(admin), c=Depends(conn)):
                 queued += 1
         audit(c, u, "competition.grade_saved", "competition", cid, cid, {"queued": queued}, client_ip(req))
     return {"queued": queued, "message": f"{queued} saved answer(s) sent to the judge. Scores update in a minute." if queued else "Nothing new to grade: every saved answer was already submitted."}
+
+
+class CompChatIn(BaseModel):
+    message: str = Field(min_length=2, max_length=1000)
+
+
+@router.post("/competitions/{cid}/assistant")
+def comp_assistant(cid: int, body: CompChatIn, req: Request, u=Depends(admin), c=Depends(conn)):
+    """Change a draft round in plain words: '10 questions per student, 6 fix the bug and 4 mcq, total 100 marks, 90 minutes'.
+    Missing questions are written by the AI into this competition (checked ones join by themselves)."""
+    from . import assistant, pool
+    comp = comp_or_404(c, cid, u)
+    if comp["status"] != "draft":
+        raise HTTPException(409, "Only a draft competition can be changed here. Unpublish it first.")
+    p = assistant.parse(body.message, {}, departments(c))
+    done = []
+    sets = {}
+    if p.get("duration_min"):
+        sets["duration_min"] = p["duration_min"]; done.append(f"Duration {p['duration_min']} minutes")
+    if p.get("start_at"):
+        sets["start_at"] = ts(p["start_at"]); done.append(f"Starts {p['start_at'].replace('T', ' ')}")
+    if "eligible_years" in p:
+        sets["eligible_years"] = json.dumps(p["eligible_years"]); done.append("Years " + (", ".join(map(str, p["eligible_years"])) or "all"))
+    specs = p.get("questions") or []
+    per = int(p.get("per_student") or 0) or (sum(s["count"] for s in specs) if specs and re.search(r"per student|each student", body.message.lower()) else 0)
+    if per:
+        sets["draw"] = per; done.append(f"{per} questions per student")
+    if specs:
+        mix = {(s.get("type") or "standard"): s["count"] for s in specs}
+        db.set_setting(c, f"mix:{cid}", json.dumps(mix))
+        done.append("Each student gets " + ", ".join(f"{n} {assistant.TYPE_NAME.get(k) or 'coding'}" for k, n in mix.items()))
+    if sets:
+        c.execute(f"UPDATE competitions SET {','.join(k + '=?' for k in sets)}, updated_at=? WHERE id=?", (*sets.values(), db.now(), cid))
+    # enough questions of each kind? pool target = asked per kind x 2 (so papers differ); the AI writes what is missing
+    writing = 0
+    have = {}
+    for r in db.all_(c, "SELECT qv.qtype FROM competition_questions cq JOIN question_versions qv ON qv.id=cq.version_id WHERE cq.competition_id=?", cid):
+        have[contest.KIND.get(r["qtype"] or "standard", "coding")] = have.get(contest.KIND.get(r["qtype"] or "standard", "coding"), 0) + 1
+    for s in specs:
+        k = contest.KIND.get(s.get("type") or "standard", "coding")
+        need_n = s["count"] * 2 - have.get(k, 0)
+        if need_n > 0 and ai.enabled():
+            writing += pool.spawn(c, u["id"], {**s, "count": need_n, "comp_tag": f"for-comp-{cid}", "tests": False if k in ("coding", "debug") else None})
+    if writing:
+        done.append(f"The AI is writing {writing} more question(s) for this round; checked ones join by themselves")
+    elif specs and not ai.enabled():
+        done.append("Not enough questions of some kinds and the AI is off: add them from the bank or a file")
+    total = int(p.get("total_marks") or 0) or (100 if per or specs else 0)
+    if total:
+        each = max(1, round(total / max(1, per or db.one(c, "SELECT draw FROM competitions WHERE id=?", cid)["draw"] or
+                                            db.one(c, "SELECT COUNT(*) AS n FROM competition_questions WHERE competition_id=?", cid)["n"] or 1)))
+        c.execute("UPDATE competition_questions SET marks=? WHERE competition_id=?", (each, cid))
+        c.execute("UPDATE competitions SET max_marks=? WHERE id=?", (total, cid))
+        done.append(f"Total {total} marks: {each} per question")
+    audit(c, u, "competition.assistant", "competition", cid, cid, {"message": body.message[:300]}, client_ip(req))
+    return {"done": done or ["I did not find anything to change. Try: '10 questions per student, 6 fix the bug and 4 mcq, total 100 marks'."]}
 
 
 class ExplainIn(BaseModel):
@@ -1903,7 +1964,7 @@ def import_file(c, u, tok, comp, difficulty="Easy", category="", per_student=0, 
                 c.execute("INSERT OR IGNORE INTO competition_questions(competition_id,question_id,version_id,ordinal,marks) "
                           "VALUES(?,?,(SELECT latest_version_id FROM questions WHERE id=?),?,?)", (comp["id"], qid, qid, start + n, marks))
             total = db.one(c, "SELECT COUNT(*) AS n FROM competition_questions WHERE competition_id=?", comp["id"])["n"]
-            per = per_student if 0 < per_student < total else 0
+            per = per_student or 0   # kept even while the list is still smaller: questions added later then make different papers
             c.execute("UPDATE competitions SET draw=?, updated_at=? WHERE id=?", (per, db.now(), comp["id"]))
         audit(c, u, "questions.from_file", detail={"ready": len(ready), "drafts": len(drafts), "competition_id": comp["id"] if comp else None},
               ip=client_ip(req) if req else None)

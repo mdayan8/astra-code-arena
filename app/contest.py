@@ -58,6 +58,27 @@ def variety(pool, n, shuffle):
     return {"sets": sets, "orders": factorial(n) if shuffle else 1, "per_student": n}
 
 
+KIND = {"standard": "coding", "complete": "coding", "debug": "debug", "mcq": "mcq", "output": "output", "trace": "trace", "prompt": "prompt"}
+
+
+def draw_mix(pool, n, mix, shuffle, rng):
+    """Exactly the asked number of each kind for every student (e.g. 6 fix-the-bug + 4 multiple choice); any shortfall is
+    filled from the rest of the list so everyone still gets n questions."""
+    by = {}
+    for q in pool:
+        by.setdefault(KIND.get(q["qtype"] or "standard", "coding"), []).append(q["question_id"])
+    pick = []
+    for kind, k in mix.items():
+        have = [i for i in by.get(KIND.get(kind, kind), []) if i not in pick]
+        pick += rng.sample(have, min(k, len(have)))
+    rest = [q["question_id"] for q in pool if q["question_id"] not in pick]
+    pick += rng.sample(rest, max(0, min(n - len(pick), len(rest))))
+    pick = pick[:n] if n else pick
+    if shuffle:
+        rng.shuffle(pick)
+    return pick
+
+
 def draw_for(pool, n, shuffle, rng):
     """pool: [{question_id, difficulty, qtype}] in organiser order. Every student gets the same mix of question kind and difficulty."""
     if n and n < len(pool):
@@ -91,7 +112,9 @@ def assigned(c, comp, uid, create=True):
             base = rotated(base, k)
         ids = base
     else:   # a draw from a bigger list: own questions, same mix, random order
-        ids = draw_for(pool, comp["draw"], bool(comp["shuffle"]), random.Random(secrets.randbits(64)))
+        rng = random.Random(secrets.randbits(64))
+        mix = db.jl(db.setting(c, f"mix:{comp['id']}", "{}"), {})
+        ids = draw_mix(pool, comp["draw"], mix, bool(comp["shuffle"]), rng) if mix else draw_for(pool, comp["draw"], bool(comp["shuffle"]), rng)
     if create and p:
         c.execute("UPDATE competition_participants SET questions=? WHERE competition_id=? AND user_id=? AND questions IS NULL", (json.dumps(ids), comp["id"], uid))
         return db.jl(db.one(c, "SELECT questions FROM competition_participants WHERE competition_id=? AND user_id=?", comp["id"], uid)["questions"])

@@ -43,14 +43,18 @@ def _when(t, now):
     m = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", t)
     if m:
         date = datetime.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
-    m = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?(?: of)? (" + "|".join(MONTHS) + r")[a-z]*(?:,? (\d{4}))?", t) or \
-        re.search(r"\b(" + "|".join(MONTHS) + r")[a-z]* (\d{1,2})(?:st|nd|rd|th)?(?:,? (\d{4}))?", t)
+    months = r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b"
+    m = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?(?: of)? " + months + r"(?:,? (\d{4}))?", t) or \
+        re.search(r"\b" + months + r" (\d{1,2})(?:st|nd|rd|th)?\b(?:,? (\d{4}))?", t)
     if m:
         a, b, y = m.groups()
-        day, mon = (int(a), MONTHS.index(b) + 1) if a.isdigit() else (int(b), MONTHS.index(a) + 1)
-        date = datetime.date(int(y) if y else now.year, mon, day)
-        if not y and date < now.date():
-            date = date.replace(year=now.year + 1)
+        try:   # "60 marks" is not a date; an impossible day is ignored instead of failing
+            day, mon = (int(a), MONTHS.index(b[:3]) + 1) if a.isdigit() else (int(b), MONTHS.index(a[:3]) + 1)
+            date = datetime.date(int(y) if y else now.year, mon, day)
+            if not y and date < now.date():
+                date = date.replace(year=now.year + 1)
+        except ValueError:
+            pass
     m = re.search(r"\b(?:on |next |this )?(" + "|".join(DAYS) + r")\b", t)
     if m and not date:
         ahead = (DAYS.index(m.group(1)) - now.weekday()) % 7
@@ -258,7 +262,7 @@ def describe(plan, chosen, short, now=None):
              ["Results", {"live": "live leaderboard", "after_end": "shown at the end"}.get(plan.get("leaderboard_visibility"), "private until you publish them")]]
     todo, ask = [], []
     qs = plan.get("questions") or []
-    if not qs:
+    if not qs and not plan.get("per_student"):
         ask.append({"q": "How many questions, and of which kinds?", "chips": ["5 mcq and 2 coding", "4 predict the output, 2 code tracing, 2 coding", "10 quiz questions", "3 DSA coding"]})
     elif any(not q.get("difficulty") for q in qs) and not plan.get("level"):
         ask.append({"q": "What level should it be? Everyone gets the same level.", "chips": ["easy", "moderate", "hard"]})

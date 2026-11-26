@@ -445,6 +445,9 @@ function compOverview(T, c) {
           <div class="small muted" style="margin-top:2px">${c.draw ? `${fmt(v.sets)} different question sets, each in ${fmt(v.orders)} possible orders: ${papers >= n ? `enough for every one of the ${c.participant_count || 'registered'} students to get a different paper.` : `only ${fmt(papers)} different papers for ${n} students: add questions or number variants.`}`
             : c.shuffle ? `In a rotated order: students who start one after another begin with different questions (${fmt(v.orders)} different orders before one repeats). For different questions too, set "Questions per student" lower than ${c.questions.length}.` : 'In the same order for everyone (shuffle is off).'}
           New questions written by the AI: none needed. Copy check: the Integrity tab compares every pair of submissions after the round.</div></div></div></section>`; })() : ''}
+      ${c.status === 'draft' ? `<section class="card pad asst" style="padding:14px 16px"><form class="row" id="cchat" style="gap:8px;flex-wrap:nowrap"><span class="lsi">${ico('sparkles', 16)}</span>
+        <input class="input" name="message" required placeholder="Change this round in plain words, e.g. 10 questions per student, 6 fix the bug and 4 mcq, total 100 marks" style="flex:1;min-width:0">
+        <button class="btn primary">Apply</button></form><div id="cchatOut"></div></section>` : ''}
       ${['draft', 'published'].includes(c.status) ? `<section class="card pad"><h3 style="margin:0 0 10px">What to do next</h3><ol class="checklist">
         <li class="${c.questions.length ? 'done' : ''}"><b>Add questions</b> <a href="#/competitions/${c.id}?t=questions">Questions tab</a>${c.draw ? ` · each student gets ${c.draw} of them` : ''}</li>
         <li class="${c.start_at ? 'done' : ''}"><b>Set a start time</b> <a href="#/competitions/${c.id}/edit">Edit</a>${c.start_at ? ` · ${fmtTime(c.start_at)}${c.auto_start ? ', starts by itself' : ''}` : ''}</li>
@@ -477,6 +480,10 @@ function compOverview(T, c) {
       <section class="card pad"><h3>Organisers</h3>${c.admins.map((a) => `<div class="small">${esc(a.name)} <span class="muted">@${esc(a.username)}</span></div>`).join('')}${ME.role === 'super_admin' ? '<button class="btn sm" id="setAdmins" style="margin-top:8px">Manage organisers</button>' : ''}</section></div></div>`;
   if ($('#numVar')) $('#numVar').onclick = () => busy($('#numVar'), async () => { const r = await POST(`${A}/competitions/${c.id}/variants`, { per: 1 });
     toast(`Making a number variant of ${r.questions} question(s). Each answer is checked by running the program. Reload in a minute to see them.`, 'info'); });
+  if ($('#cchat')) $('#cchat').onsubmit = (e) => { e.preventDefault(); busy($('button', e.target), async () => {
+    const r = await POST(`${A}/competitions/${c.id}/assistant`, formData(e.target));
+    $('#cchatOut').innerHTML = `<ul class="small" style="margin:10px 0 0;padding-left:20px">${r.done.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`;
+    setTimeout(goRoute, 2500); }); };
   if ($('#poolBtn')) $('#poolBtn').onclick = () => busy($('#poolBtn'), async () => { const r = await POST(`${A}/competitions/${c.id}/pool`, { count: 3 }); toast(r.started ? 'The AI is writing 3 variants. Each is added only if its answer checks out. This page shows the count.' : 'Already working on it.', 'info'); });
   $('#af').onsubmit = (e) => { e.preventDefault(); busy($('button', e.target), async () => { await POST(`${A}/announcements`, { ...formData(e.target), competition_id: c.id }); toast('Announcement posted', 'ok'); goRoute(); }); };
   $$('[data-da]').forEach((b) => b.onclick = async () => { await DEL(`${A}/announcements/${b.dataset.da}`).catch(fail); goRoute(); });
