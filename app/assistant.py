@@ -85,6 +85,8 @@ def _questions(t):
             continue
         n = _num(m.group(1))
         rest = clause[m.end():]
+        if re.match(r"\s*(?:questions?\s*)?(?:per|each|for each|for every)\s*student", rest):
+            continue   # "5 per student" is how many each student gets, not more questions
         typ = next((k for k, rx in TYPES if re.search(rx, rest)), None)
         diff = next((k for k, rx in DIFFS if re.search(rx, rest)), None)
         if not n or n > 30 or not (typ or diff or re.search(r"question|problem|challenge|\bqs?\b", rest)):
@@ -133,6 +135,9 @@ def parse(text, plan=None, departments=(), now=None):
     m = re.search(r"\b(\d{1,2})\s*(?:sets|versions|papers)\b", t)
     if m:
         p["sets"], p["unique"] = max(2, min(10, int(m.group(1)))), True
+    m = re.search(r"\b(\d{1,3})\s*(?:questions?\s*)?(?:per|each|for each|for every)\s*student", t)
+    if m:
+        p["per_student"] = max(1, min(200, int(m.group(1))))
     if re.search(r"different (?:questions?|sets?|papers?)|unique (?:questions?|sets?)|own (?:set|questions)|randomi[sz]e|each student (?:gets|sees) (?:a )?different|no two students|shuffle (?:the )?questions", t) and not re.search(r"\bno\b[^.]{0,12}different|same questions? for (?:everyone|all)", t):
         p["unique"] = True
     elif re.search(r"same questions? for (?:everyone|all)|everyone (?:gets|sees) the same|no,? same", t):
@@ -294,6 +299,7 @@ if __name__ == "__main__":  # self-check
     p4 = parse("hard", {"questions": [{"count": 2, "type": "mcq", "difficulty": None, "topic": ""}]}, [], now)
     assert p4["questions"][0]["difficulty"] == "Challenging" and p4["level"] == "Challenging", p4
     assert parse("no, same questions for everyone", {"unique": True}, [], now)["unique"] is False
+    assert parse("5 questions per student", {}, [], now)["per_student"] == 5 and "questions" not in parse("5 questions per student", {}, [], now)
     assert parse("10 sets", {}, [], now)["sets"] == 10 and parse("10 sets", {}, [], now)["unique"]
     assert parse("simple input output only", {}, [], now)["tests"] is False and parse("with hidden test cases", {}, [], now)["tests"] is True
     assert parse("5 logical thinking questions", {}, [], now)["questions"] == [{"count": 5, "type": "mcq", "difficulty": None, "topic": "logical"}]

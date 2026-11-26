@@ -17,9 +17,9 @@ const MOD = { dashboard: 'Dashboard', competitions: 'Competitions', questions: '
   submissions: 'Submissions', leaderboards: 'Leaderboards', semesters: 'Semesters', reports: 'Reports', admins: 'Admin Users', audit: 'Audit Logs', database: 'Database', settings: 'System Settings' };
 // ---------- competition assistant (chat) ----------
 // Reference document for AI writing (PDF, Word, PowerPoint, text, image). Returns a small UI bound to `holder.ref`.
-function refPicker(holder) {
+function refPicker(holder, label = 'Attach reference') {
   const id = 'rf' + Math.random().toString(36).slice(2, 8);
-  const html = `<label class="btn sm refbtn" for="${id}" title="PDF, Word, PowerPoint, text or an image of notes or an old question paper">${ico('upload', 13)} Attach reference</label>
+  const html = `<label class="btn sm refbtn" for="${id}" title="PDF, Word, PowerPoint, text or an image of notes or an old question paper">${ico('upload', 13)} ${label}</label>
     <input type="file" id="${id}" hidden accept=".pdf,.docx,.odt,.pptx,.rtf,.txt,.md,.html,.htm,.c,.cpp,.py,.java,.png,.jpg,.jpeg,.webp"><span class="refchip" data-chip="${id}"></span>`;
   const bind = (root) => {
     const inp = $('#' + id, root), chip = $(`[data-chip="${id}"]`, root);
@@ -37,7 +37,7 @@ function refPicker(holder) {
 
 function assistantCard(after) {
   let plan = {};
-  const refs = { ref: '' }, rp = refPicker(refs);
+  const refs = { ref: '' }, rp = refPicker(refs, 'Attach paper or notes');
   const TY = { standard: 'coding', debug: 'fix the bug', complete: 'complete the code', output: 'predict the output', trace: 'code tracing', prompt: 'prompt', mcq: 'multiple choice' };
   const el = document.createElement('section'); el.className = 'card asst';
   el.innerHTML = `<div class="asst-head"><div class="asst-ico">${ico('sparkles', 18)}</div><div><h3>Describe a competition</h3><div class="small muted">Say it in plain words. I build the plan and pick matching questions from the bank. You review it, then create the draft.</div></div></div>
@@ -67,6 +67,20 @@ function assistantCard(after) {
   $('#asForm', el).onsubmit = (e) => { e.preventDefault(); send($('#asIn', el).value); };
   $('#asIn', el).onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send($('#asIn', el).value); } };
   $$('.chipbtn', el).forEach((b) => b.onclick = () => send(b.textContent));
+  refs.onFound = (r) => {
+    const f = r?.found;
+    if (!f || !f.total) { if (r) say('bot', `<div class="small">I read <b>${esc(r.name)}</b>. It has no separately numbered questions, so I will use it as reference material when the AI writes missing questions.</div>`); return; }
+    say('bot', `<div><b>${f.total} questions found in ${esc(r.name)}</b><div class="small muted">${f.mcq_ready} multiple choice with answers, ready${f.mcq_no_answer ? ` · ${f.mcq_no_answer} without an answer` : ''}${f.other ? ` · ${f.other} other` : ''} (the ones not ready are saved as drafts to finish)</div>
+      <div class="row wrap" style="gap:8px;margin-top:10px;align-items:flex-end"><label class="field" style="width:170px"><span class="lbl">Questions per student</span><input class="input" type="number" min="0" max="200" value="${plan.per_student || 0}" data-per></label>
+        <button type="button" class="btn primary sm" data-usefile>${ico('check', 13)} Create the competition with all ${f.mcq_ready} questions</button></div>
+      <div class="tiny muted" style="margin-top:6px">0 = everyone gets all of them (in a rotated order). Fewer = each student gets their own set. Say the time, years and rules in the chat first if you like; they are kept.</div></div>`);
+    const last = log.lastElementChild;
+    $('[data-usefile]', last).onclick = (e) => busy(e.target, async () => {
+      const x = await POST(`${A}/assistant/competition`, { message: '', plan, create: true, ref: refs.ref, use_file: true, per_student: Number($('[data-per]', last).value || 0) });
+      say('bot', `<div class="notice ok">${ico('check2', 15)} Draft created: <b>${esc(x.created.title)}</b> with ${x.file_import.in_competition} questions from the file${x.file_import.drafts ? ` (${x.file_import.drafts} more saved as drafts to finish)` : ''}. <a href="#/competitions/${x.created.id}">Open it to review and publish</a>.</div>`);
+      plan = {}; after && after();
+    });
+  };
   rp.bind(el);
   return el;
 }
@@ -445,13 +459,28 @@ function compOverview(T, c) {
   };
 }
 
+function addFromFile(c) {
+  const h = { ref: '' }, rp = refPicker(h, 'Attach question paper');
+  const m = modal({ title: 'Add questions from a file', size: 'wide', body: `<p class="small muted" style="margin-top:0">Attach a question paper (PDF, Word, PowerPoint, text or a photo). Every numbered question is found and taken as written; multiple choice with a marked answer is ready at once.</p>
+    <div class="row" style="gap:8px">${rp.html}</div><div id="ffound" class="small muted" style="margin-top:12px">No file yet.</div>
+    <div class="grid g3" style="margin-top:12px">${fld('Level', sel('fdiff', [['Easy', 'Easy'], ['Intermediate', 'Intermediate'], ['Challenging', 'Hard']], 'Easy'))}${fld('Marks each', '<input class="input" type="number" name="fmarks" value="10" min="1">')}
+      ${fld('Questions per student', `<input class="input" type="number" name="fper" min="0" max="200" value="${c.draw || 0}">`, '0 = everyone gets all')}</div>`,
+    actions: [{ label: 'Cancel' }, { label: 'Add all', kind: 'primary', onClick: async (ov) => {
+      if (!h.found?.total) { toast('Attach a question paper first.', 'info'); return false; }
+      const v = (n) => $(`[name=${n}]`, ov).value;
+      const r = await POST(`${A}/ai/reference/${h.ref}/import`, { competition_id: c.id, difficulty: v('fdiff'), category: c.title.slice(0, 60), marks: Number(v('fmarks') || 10), per_student: Number(v('fper') || 0) });
+      toast(`${r.in_competition} question(s) added${r.drafts ? `; ${r.drafts} saved as drafts to finish` : ''}.`, 'ok'); goRoute(); } }] });
+  h.onFound = (r) => { const f = r?.found; $('#ffound', m.el).innerHTML = !r ? 'No file yet.' : f?.total ? `<b style="color:var(--text)">${f.total} questions found.</b> ${f.mcq_ready} multiple choice with answers will be added${f.mcq_no_answer ? `; ${f.mcq_no_answer} without an answer` : ''}${f.other ? ` and ${f.other} other` : ''} will be saved as drafts to finish.` : 'No separately numbered questions found. Number them 1, 2, 3 ... in the file.'; };
+  rp.bind(m.el);
+}
+
 async function compQuestions(T, c) {
   $('#hdrActions').innerHTML = '';
   let list = c.questions.map((q) => ({ question_id: q.question_id, marks: q.marks, title: q.title, version_no: q.version_no, validated: !!q.validated_at, status: q.q_status, latest: q.latest_version_id === q.version_id, difficulty: q.difficulty }));
   const editable = c.status === 'draft';
   const draw = () => {
     T.innerHTML = `${editable ? '' : `<div class="notice small" style="margin-bottom:12px">Questions are pinned to the exact versions shown. Move the competition back to draft to change them.</div>`}
-      <div class="card"><div class="card-head"><h3>Question set</h3><div class="row"><span class="small muted">Total marks: <b>${list.reduce((s, q) => s + Number(q.marks || 0), 0)}</b></span>${editable ? '<button class="btn sm" id="addQ">+ Add from bank</button><button class="btn primary sm" id="saveQ">Save question set</button>' : ''}</div></div>
+      <div class="card"><div class="card-head"><h3>Question set</h3><div class="row"><span class="small muted">Total marks: <b>${list.reduce((s, q) => s + Number(q.marks || 0), 0)}</b></span>${editable ? '<button class="btn sm" id="addFile">+ From a file</button> <button class="btn sm" id="addQ">+ Add from bank</button><button class="btn primary sm" id="saveQ">Save question set</button>' : ''}</div></div>
       <div class="card-body stack tight">${list.length ? list.map((q, i) => `<div class="qrow"><b>${String.fromCharCode(65 + i)}</b><div><a href="#/questions/${q.question_id}"><b>${esc(q.title)}</b></a> <span class="tiny muted">v${q.version_no}</span> ${diffBadge(q.difficulty)} ${qstatus(q.status)} ${q.validated ? '<span class="badge green">validated</span>' : '<span class="badge amber">needs validation</span>'}</div>
         <input class="input" type="number" min="1" value="${q.marks}" data-mk="${i}" ${editable ? '' : 'disabled'} title="Marks">
         <div class="row" style="gap:2px">${editable ? `<button class="btn xs ghost" data-up="${i}" title="Move up">${ico('up')}</button><button class="btn xs ghost" data-rm="${i}" title="Remove">${ico('x')}</button>` : ''}</div></div>`).join('') : empty('No questions yet', editable ? 'Add approved questions from the question bank.' : '')}</div></div>`;
@@ -459,6 +488,7 @@ async function compQuestions(T, c) {
     $$('[data-up]').forEach((b) => b.onclick = () => { const i = Number(b.dataset.up); if (i) { [list[i - 1], list[i]] = [list[i], list[i - 1]]; draw(); } });
     $$('[data-rm]').forEach((b) => b.onclick = () => { list.splice(Number(b.dataset.rm), 1); draw(); });
     if ($('#saveQ')) $('#saveQ').onclick = () => busy($('#saveQ'), async () => { await PUT(`${A}/competitions/${c.id}/questions`, { questions: list.map((q) => ({ question_id: q.question_id, marks: q.marks })) }); toast('Question set saved', 'ok'); goRoute(); });
+    if ($('#addFile')) $('#addFile').onclick = () => addFromFile(c);
     if ($('#addQ')) $('#addQ').onclick = async () => {
       const bank = await GET(`${A}/questions`);
       const have = new Set(list.map((q) => q.question_id));

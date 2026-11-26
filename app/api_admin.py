@@ -405,6 +405,8 @@ class AssistIn(BaseModel):
     fill: bool = False
     ref: str = Field(default="", max_length=32)
     tests: bool | None = None
+    use_file: bool = False                       # put every question of the attached file into the new competition
+    per_student: int = Field(default=0, ge=0, le=200)
 
 
 @router.post("/assistant/competition")
@@ -433,11 +435,13 @@ def assistant_competition(body: AssistIn, req: Request, u=Depends(admin), c=Depe
         out["filling"] = {"started": sum(started.values()), "skipped": [assistant.TYPE_NAME[k] for k, v in started.items() if not v]}
     plan["picked"] = [q["id"] for q in chosen]
     out["plan"] = plan
+    if body.ref and not body.create:   # a question paper attached in the chat: say what is in it
+        out["file"] = found_summary(pdfimport.find_questions(ref_text(body.ref)))
     if not body.create:
         return out
-    if not chosen:
-        raise HTTPException(400, "No questions matched yet. Tell me which questions you want first.")
-    title = plan.get("title") or assistant.default_title(plan, datetime.now(TZ))
+    if not chosen and not (body.use_file and body.ref):
+        raise HTTPException(400, "No questions matched yet. Tell me which questions you want first, or attach a question paper.")
+    title = plan.get("title") or assistant.default_title({**plan, "questions": plan.get("questions") or ([{"type": "mcq"}] if body.use_file else [])}, datetime.now(TZ))
     base = re.sub(r"[^A-Z0-9]+", "-", title.upper()).strip("-") or "ROUND"
     base = base if len(base) <= 24 else (base[:24].rsplit("-", 1)[0] or base[:24])
     code, n = base, 2
@@ -449,10 +453,14 @@ def assistant_competition(body: AssistIn, req: Request, u=Depends(admin), c=Depe
     comp = create_comp(CompIn(title=title, code=code, description="Created with the competition assistant.", duration_min=int(plan.get("duration_min") or 90),
                               academic_year=f"{yr.year if yr.month >= 6 else yr.year - 1}-{str((yr.year if yr.month >= 6 else yr.year - 1) + 1)[2:]}",
                               eligible_years=plan.get("eligible_years") or [], eligible_departments=plan.get("eligible_departments") or [],
-                              start_at=plan.get("start_at"), languages=plan.get("languages") or ["c", "python"], max_marks=marks * len(chosen),
+                              start_at=plan.get("start_at"), languages=plan.get("languages") or ["c", "python"], max_marks=max(1, marks * len(chosen)),
                               scoring={"mode": plan.get("scoring_mode") or "partial"}, leaderboard_visibility=plan.get("leaderboard_visibility") or "hidden",
                               lockdown=plan.get("lockdown") or {}, draw=per_student if per_student < len(chosen) else 0), req, u, c)
-    set_questions(comp["id"], QuestionsIn(questions=[{"question_id": q["id"], "marks": marks} for q in chosen]), req, u, c)
+    if chosen:
+        set_questions(comp["id"], QuestionsIn(questions=[{"question_id": q["id"], "marks": marks} for q in chosen]), req, u, c)
+    if body.use_file and body.ref:   # every question from the attached paper, as written
+        out["file_import"] = import_file(c, u, body.ref, contest.get_comp(c, comp["id"]), plan.get("level") or "Easy", title[:60],
+                                         body.per_student or int(plan.get("per_student") or 0), 10, req)
     out.update(created={"id": comp["id"], "title": title, "code": code})
     return out
 
@@ -1793,22 +1801,26 @@ def ref_import(tok: str, body: RefImportIn, req: Request, u=Depends(admin), c=De
     """Every question in the attached file, taken as it is. Multiple choice with a marked answer is ready at once;
     multiple choice without an answer and other questions are saved as drafts to finish in the Question Bank."""
     need(u, "questions")
+    comp = None
+    if body.competition_id:
+        comp = comp_or_404(c, body.competition_id, u)
+    return import_file(c, u, tok, comp, body.difficulty, body.category, body.per_student, body.marks, req)
+
+
+def import_file(c, u, tok, comp, difficulty="Easy", category="", per_student=0, marks=10, req=None):
     text = ref_text(tok)
     found = pdfimport.find_questions(text)
     if found_summary(found)["total"] == 0:
         raise HTTPException(400, "No separate questions were found in this file. Number them 1, 2, 3 ... (or Q1, Q2 ...), or use it as a reference for the AI instead.")
-    comp = None
-    if body.competition_id:
-        comp = comp_or_404(c, body.competition_id, u)
-        if comp["status"] != "draft":
-            raise HTTPException(409, "Questions can only be added while the competition is a draft. Unpublish it first.")
-    cat = body.category.strip() or "From file"
+    if comp and comp["status"] != "draft":
+        raise HTTPException(409, "Questions can only be added while the competition is a draft. Unpublish it first.")
+    cat = (category or "").strip() or "From file"
     ready, drafts = [], []
     with db.tx(c):
         for i, q in enumerate(found, 1):
             if q["kind"] == "mcq":
                 title = re.sub(r"\s+", " ", q["statement"])[:70].rstrip(" ?.:") or f"Question {i}"
-                qid = create_question(c, QuestionIn(title=title, category=cat, difficulty=body.difficulty, tags=["from-file"], statement=q["statement"][:20000],
+                qid = create_question(c, QuestionIn(title=title, category=cat, difficulty=difficulty, tags=["from-file"], statement=q["statement"][:20000],
                                                     qtype="mcq", options=q["options"], answer=q["answer"] or ""), u, "pdf")
                 if q["answer"]:
                     c.execute("UPDATE questions SET status='approved' WHERE id=?", (qid,))
@@ -1818,17 +1830,18 @@ def ref_import(tok: str, body: RefImportIn, req: Request, u=Depends(admin), c=De
             else:
                 first = q["raw"].strip().split("\n")[0]
                 title = re.sub(r"^\s*(?:(?:question|problem|q)\s*[-#:.]?\s*)?\d{1,3}\s*[.):\]]\s*", "", first, flags=re.I)[:70] or f"Question {i}"
-                drafts.append(create_question(c, QuestionIn(title=title, category=cat, difficulty=body.difficulty, tags=["from-file", "to-finish"],
+                drafts.append(create_question(c, QuestionIn(title=title, category=cat, difficulty=difficulty, tags=["from-file", "to-finish"],
                                                             statement=q["raw"][:20000]), u, "pdf"))
         if comp and ready:
             start = db.one(c, "SELECT COALESCE(MAX(ordinal),0) AS n FROM competition_questions WHERE competition_id=?", comp["id"])["n"]
-            for k, qid in enumerate(ready, 1):
+            for n, qid in enumerate(ready, 1):
                 c.execute("INSERT OR IGNORE INTO competition_questions(competition_id,question_id,version_id,ordinal,marks) "
-                          "VALUES(?,?,(SELECT latest_version_id FROM questions WHERE id=?),?,?)", (comp["id"], qid, qid, start + k, body.marks))
+                          "VALUES(?,?,(SELECT latest_version_id FROM questions WHERE id=?),?,?)", (comp["id"], qid, qid, start + n, marks))
             total = db.one(c, "SELECT COUNT(*) AS n FROM competition_questions WHERE competition_id=?", comp["id"])["n"]
-            per = body.per_student if 0 < body.per_student < total else 0
+            per = per_student if 0 < per_student < total else 0
             c.execute("UPDATE competitions SET draw=?, updated_at=? WHERE id=?", (per, db.now(), comp["id"]))
-        audit(c, u, "questions.from_file", detail={"ready": len(ready), "drafts": len(drafts), "competition_id": body.competition_id}, ip=client_ip(req))
+        audit(c, u, "questions.from_file", detail={"ready": len(ready), "drafts": len(drafts), "competition_id": comp["id"] if comp else None},
+              ip=client_ip(req) if req else None)
     return {"ready": len(ready), "drafts": len(drafts), "draft_ids": drafts[:200], "competition_id": comp["id"] if comp else None,
             "in_competition": len(ready) if comp else 0}
 

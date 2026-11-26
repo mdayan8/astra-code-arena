@@ -850,7 +850,12 @@ def run():
     assert len(cfd["questions"]) == 10 and cfd["draw"] == 5 and all(q["q_status"] == "approved" for q in cfd["questions"])
     q3 = sup.get(f"{A}/questions/{cfd['questions'][2]['question_id']}")
     assert q3["version"]["qtype"] == "mcq" and q3["references"]["answer"] == "6" and q3["version"]["options"] == ["6", "7", "3", "14"], q3["version"]
-    ok("question paper (PDF): all 12 questions found; 10 with answers ready and added to a competition (5 per student), 2 saved to finish")
+    chat = evA.post(f"{A}/assistant/competition", {"message": "45 minute quiz for 2nd years, 4 questions per student", "ref": paper["ref"]})
+    assert chat["file"]["total"] == 12 and chat["plan"]["per_student"] == 4 and not chat["plan"].get("questions"), chat["plan"]
+    made = evA.post(f"{A}/assistant/competition", {"message": "", "plan": chat["plan"], "create": True, "ref": paper["ref"], "use_file": True})
+    mc2 = evA.get(f"{A}/competitions/{made['created']['id']}")
+    assert len(mc2["questions"]) == 10 and mc2["draw"] == 4 and mc2["duration_min"] == 45 and mc2["eligible_years"] == [2], (len(mc2["questions"]), mc2["draw"])
+    ok("question paper (PDF): all 12 questions found; 10 with answers ready and added to a competition (5 per student), 2 saved to finish; the competition chat builds a round from the same paper")
     if not EXTERNAL:
         from app import ai, db as _db
         c = _db.connect()
