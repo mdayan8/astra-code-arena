@@ -1,7 +1,7 @@
 // ASTRA Control Centre. Served only from the private admin route; every API call is re-authorised server-side.
 const root = $('#root');
 const A = '/api/admin';
-let ME = null, META = null, timers = [];
+let ME = null, META = null, timers = [], AIREADY = false;
 const every = (fn, ms) => { const t = setInterval(fn, ms); timers.push(t); return t; };
 const clearTimers = () => { timers.forEach(clearInterval); timers = []; };
 S.onUnauthorized = () => { ME = null; loginScreen(); };
@@ -33,6 +33,19 @@ function refPicker(holder, label = 'Attach reference') {
     draw();
   };
   return { html, bind };
+}
+
+// The AI writes NEW questions like the ones in an attached paper (same kind, topics, level). They wait for approval;
+// approving one written for a competition adds it to that competition.
+const similarHTML = (n) => `<div class="row wrap simrow" style="gap:8px;align-items:center;margin-top:10px">${ico('sparkles', 14)}<span class="small">Also let the AI write</span>
+  <input class="input" type="number" min="1" max="40" value="${n}" data-simn style="width:72px;height:32px"><span class="small">more like these</span>
+  <button type="button" class="btn sm" data-sim>Write with AI</button><span class="tiny muted">You approve each one${'${COMP}'}.</span></div>`;
+function bindSimilar(root, holder, compId, level = '') {
+  const b = $('[data-sim]', root); if (!b) return;
+  b.onclick = () => busy(b, async () => {
+    const r = await POST(`${A}/ai/reference/${holder.ref}/similar`, { count: Number($('[data-simn]', root).value || 5), difficulty: level, competition_id: compId || null });
+    $('.simrow', root).innerHTML = `<span class="small">${ico('check', 13)} The AI is writing ${r.started} ${r.kind} question(s) like these. They appear in <a href="#/ai">AI Studio</a> as they finish${compId ? '; approving one adds it to this competition' : ''}.</span>`;
+  });
 }
 
 function assistantCard(after) {
@@ -77,7 +90,9 @@ function assistantCard(after) {
     const last = log.lastElementChild;
     $('[data-usefile]', last).onclick = (e) => busy(e.target, async () => {
       const x = await POST(`${A}/assistant/competition`, { message: '', plan, create: true, ref: refs.ref, use_file: true, per_student: Number($('[data-per]', last).value || 0) });
-      say('bot', `<div class="notice ok">${ico('check2', 15)} Draft created: <b>${esc(x.created.title)}</b> with ${x.file_import.in_competition} questions from the file${x.file_import.drafts ? ` (${x.file_import.drafts} more saved as drafts to finish)` : ''}. <a href="#/competitions/${x.created.id}">Open it to review and publish</a>.</div>`);
+      say('bot', `<div class="notice ok">${ico('check2', 15)} Draft created: <b>${esc(x.created.title)}</b> with ${x.file_import.in_competition} questions from the file${x.file_import.drafts ? ` (${x.file_import.drafts} more saved as drafts to finish)` : ''}. <a href="#/competitions/${x.created.id}">Open it to review and publish</a>.</div>
+        ${AIREADY ? similarHTML(Math.min(20, f.total)).replace('${COMP}', '; approving adds it to this competition') : ''}`);
+      bindSimilar(log.lastElementChild, refs, x.created.id);
       plan = {}; after && after();
     });
   };
@@ -135,6 +150,7 @@ function forcePw() {
 
 let goRoute;
 function start() {
+  if (ME?.modules?.includes('ai')) GET(`${A}/ai/status`).then((s) => { AIREADY = !!(s.enabled && s.reachable !== false); }).catch(() => {});
   root.innerHTML = `<div class="shell"><aside class="side" id="side"><a class="brand" href="#/"><img src="${LOGO}" alt=""><span>ASTRA<small>Control Centre</small></span></a>
     ${ME.modules.map((m) => `<a href="#/${m === 'dashboard' ? '' : m}" data-m="${m}">${icon(m)}${MOD[m]}</a>`).join('')}
     <div class="grow"></div><div class="tiny faint" style="padding:10px">Server time ${esc(S.tz)}</div></aside>
@@ -470,7 +486,8 @@ function addFromFile(c) {
       const v = (n) => $(`[name=${n}]`, ov).value;
       const r = await POST(`${A}/ai/reference/${h.ref}/import`, { competition_id: c.id, difficulty: v('fdiff'), category: c.title.slice(0, 60), marks: Number(v('fmarks') || 10), per_student: Number(v('fper') || 0) });
       toast(`${r.in_competition} question(s) added${r.drafts ? `; ${r.drafts} saved as drafts to finish` : ''}.`, 'ok'); goRoute(); } }] });
-  h.onFound = (r) => { const f = r?.found; $('#ffound', m.el).innerHTML = !r ? 'No file yet.' : f?.total ? `<b style="color:var(--text)">${f.total} questions found.</b> ${f.mcq_ready} multiple choice with answers will be added${f.mcq_no_answer ? `; ${f.mcq_no_answer} without an answer` : ''}${f.other ? ` and ${f.other} other` : ''} will be saved as drafts to finish.` : 'No separately numbered questions found. Number them 1, 2, 3 ... in the file.'; };
+  h.onFound = (r) => { const f = r?.found; if (f?.total && AIREADY) { const box = document.createElement('div'); box.innerHTML = similarHTML(Math.min(20, f.total)).replace('${COMP}', '; approving adds it to this competition'); $('#ffound', m.el).after(box); bindSimilar(box, h, c.id); }
+    $('#ffound', m.el).innerHTML = !r ? 'No file yet.' : f?.total ? `<b style="color:var(--text)">${f.total} questions found.</b> ${f.mcq_ready} multiple choice with answers will be added${f.mcq_no_answer ? `; ${f.mcq_no_answer} without an answer` : ''}${f.other ? ` and ${f.other} other` : ''} will be saved as drafts to finish.` : 'No separately numbered questions found. Number them 1, 2, 3 ... in the file.'; };
   rp.bind(m.el);
 }
 
@@ -1018,7 +1035,9 @@ async function aiPage() {
         ${fld('Category', '<input class="input" name="fcat" placeholder="e.g. Unit 3 quiz">')}
         ${fld('Add to competition (optional)', sel('fcomp', [['', 'No, only the question bank'], ...drafts.map((x) => [String(x.id), `${x.code} · ${x.title}`])], ''), drafts.length ? 'draft competitions' : 'create a draft competition first')}
         ${fld('Questions per student', `<input class="input" type="number" name="fper" min="0" max="200" value="0">`, `0 = all ${f.mcq_ready}; less = each student gets their own set`)}</div>
-      <div class="row" style="gap:8px;margin-top:10px"><button type="button" class="btn primary" id="takeAll">${ico('check', 14)} Add all ${f.total} as they are</button><span class="tiny muted">No AI needed. Answers come from the file.</span></div></div>`;
+      <div class="row" style="gap:8px;margin-top:10px"><button type="button" class="btn primary" id="takeAll">${ico('check', 14)} Add all ${f.total} as they are</button><span class="tiny muted">No AI needed. Answers come from the file.</span></div>
+      ${on ? similarHTML(Math.min(20, f.total)).replace('${COMP}', '; if a competition is chosen above, approving adds it there') : ''}</div>`;
+    if (on) $('[data-sim]', box).onclick = () => { const cid = box.querySelector('[name=fcomp]').value; bindSimilar(box, askRef, cid ? Number(cid) : null, box.querySelector('[name=fdiff]').value); $('[data-sim]', box).onclick(); };
     $('#takeAll').onclick = () => busy($('#takeAll'), async () => {
       const v = (n) => box.querySelector(`[name=${n}]`).value;
       const res = await POST(`${A}/ai/reference/${askRef.ref}/import`, { difficulty: v('fdiff'), category: v('fcat'), competition_id: v('fcomp') ? Number(v('fcomp')) : null, per_student: Number(v('fper') || 0) });
@@ -1047,7 +1066,7 @@ async function aiPage() {
   $$('[data-g]', v).forEach((tr) => tr.onclick = () => {
     const g = drafts.find((x) => x.id == tr.dataset.g);
     modal({ title: g.payload.title || 'AI question', body: `<div class="row" style="margin-bottom:10px"><span class="badge ${STAT[g.status][1]}">${STAT[g.status][0]}</span></div>
-      <div class="small muted" style="margin-bottom:6px">What the checks found</div><div class="stack tight">${g.warnings.map((w) => `<div class="notice small ${/passed|Published|proved|Fix the bug: the starter/.test(w) ? 'ok' : /fail|Still|timed|wrong|could not|Not published/i.test(w) ? 'warn' : ''}">${esc(w)}</div>`).join('') || '<span class="small muted">Still working…</span>'}</div>`,
+      <div class="small muted" style="margin-bottom:6px">What the checks found</div><div class="stack tight">${g.warnings.map((w) => `<div class="notice small ${/passed|Published|proved|Fix the bug: the starter/.test(w) ? 'ok' : /fail|Still|timed|wrong|could not|Not published|Please check|unproved|guess/i.test(w) ? 'warn' : ''}">${esc(w)}</div>`).join('') || '<span class="small muted">Still working…</span>'}</div>`,
       actions: [...(g.question_id ? [{ label: 'Open question to review & approve', kind: 'primary', onClick: () => nav(`/questions/${g.question_id}`) }] : []), ...(!['rejected', 'approved'].includes(g.status) ? [{ label: 'Reject', kind: 'danger', onClick: async () => { await POST(`${A}/drafts/${g.id}/reject`); goRoute(); } }] : []), { label: 'Close' }] });
   });
   if (drafts.some((g) => g.status === 'generating')) every(async () => { const d = await GET(`${A}/drafts?source=ai`).catch(() => []); if (!d.some((g) => g.status === 'generating')) { clearTimers(); goRoute(); } }, 3000);

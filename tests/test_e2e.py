@@ -850,6 +850,11 @@ def run():
     assert len(cfd["questions"]) == 10 and cfd["draw"] == 5 and all(q["q_status"] == "approved" for q in cfd["questions"])
     q3 = sup.get(f"{A}/questions/{cfd['questions'][2]['question_id']}")
     assert q3["version"]["qtype"] == "mcq" and q3["references"]["answer"] == "6" and q3["version"]["options"] == ["6", "7", "3", "14"], q3["version"]
+    evA.post(f"{A}/ai/reference/{paper['ref']}/similar", {"count": 5, "competition_id": cfile["id"]}, expect=503)   # no AI here: refused with a reason
+    tagged = evA.post(f"{A}/questions", {"title": "AI-made like the paper", "category": "Unit 1", "difficulty": "Easy", "tags": ["ai", f"for-comp-{cfile['id']}"],
+                                         "statement": "What is 6 + 6 in C?", "qtype": "mcq", "options": ["12", "13", "6", "41"], "answer": "12"})
+    sup.post(f"{A}/questions/{tagged['id']}/status", {"status": "approved"})
+    assert len(evA.get(f"{A}/competitions/{cfile['id']}")["questions"]) == 11   # approving an AI question written for this round adds it
     chat = evA.post(f"{A}/assistant/competition", {"message": "45 minute quiz for 2nd years, 4 questions per student", "ref": paper["ref"]})
     assert chat["file"]["total"] == 12 and chat["plan"]["per_student"] == 4 and not chat["plan"].get("questions"), chat["plan"]
     made = evA.post(f"{A}/assistant/competition", {"message": "", "plan": chat["plan"], "create": True, "ref": paper["ref"], "use_file": True})

@@ -26,7 +26,7 @@ def spawn(c, uid, m, reference=""):
     Returns how many were started (0 = this type cannot be written)."""
     typ, n = m.get("type"), max(1, min(int(m.get("count") or 1), 40))
     topic = (m.get("topic") or "").strip() or ("the topics in the reference material" if reference else "")
-    p = {"difficulty": m.get("difficulty") or "Easy"}
+    p = {"difficulty": m.get("difficulty") or "Easy", **({"comp_tag": m["comp_tag"]} if m.get("comp_tag") else {})}
     if reference:
         p["reference"] = ai.chunk(reference, 0, 4000)
     if typ in ("mcq", "output", "trace"):

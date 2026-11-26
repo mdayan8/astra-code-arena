@@ -1372,6 +1372,13 @@ def q_status(qid: int, body: QStatusIn, req: Request, u=Depends(admin), c=Depend
             raise HTTPException(400, "Run reference-solution validation successfully before approving.")
     c.execute("UPDATE questions SET status=?, approved_by=?, updated_at=? WHERE id=?",
               (body.status, u["id"] if body.status == "approved" else q["approved_by"], db.now(), qid))
+    m = re.search(r"\bfor-comp-(\d+)\b", " ".join(q["tags"] or []))
+    if body.status == "approved" and m:   # written by the AI for a competition: approving it adds it there (while that round is a draft)
+        comp = db.one(c, "SELECT id, status FROM competitions WHERE id=?", int(m.group(1)))
+        if comp and comp["status"] == "draft":
+            c.execute("INSERT OR IGNORE INTO competition_questions(competition_id,question_id,version_id,ordinal,marks) VALUES(?,?,?,"
+                      "(SELECT COALESCE(MAX(ordinal),0)+1 FROM competition_questions WHERE competition_id=?),?)",
+                      (comp["id"], qid, q["version"]["id"], comp["id"], 10 if q["version"].get("qtype") in judge.ANSWER_QTYPES else 100))
     audit(c, u, f"question.{body.status}", "question", qid, ip=client_ip(req))
     return question_full(c, qid)
 
@@ -1786,6 +1793,32 @@ def found_summary(found):
             "mcq_no_answer": sum(1 for q in found if q["kind"] == "mcq" and not q["answer"]),
             "other": sum(1 for q in found if q["kind"] == "other") if len(found) > 1 else 0,
             "sample": [(q.get("statement") or q["raw"])[:90] for q in found[:3]]}
+
+
+class SimilarIn(BaseModel):
+    count: int = Field(default=10, ge=1, le=40)
+    difficulty: str = Field(default="", pattern="^(|Easy|Intermediate|Challenging)$")
+    competition_id: int | None = None
+
+
+@router.post("/ai/reference/{tok}/similar")
+def ref_similar(tok: str, body: SimilarIn, req: Request, u=Depends(admin), c=Depends(conn)):
+    """The AI writes NEW questions like the ones in the attached paper: same kind, topics and level, different content.
+    They wait for approval in AI Studio; approving one that was written for a competition adds it to that competition."""
+    need(u, "ai")
+    need_ai()
+    from . import pool
+    text = ref_text(tok)
+    found = pdfimport.find_questions(text)
+    s = found_summary(found)
+    if body.competition_id:
+        comp_or_404(c, body.competition_id, u)
+    m = {"count": body.count, "type": "mcq" if s["mcq_ready"] + s["mcq_no_answer"] >= s["other"] else None,
+         "difficulty": body.difficulty or None, "topic": "new questions like the ones in the organiser's paper (same kind, topics and level, different wording and numbers)",
+         "tests": False, **({"comp_tag": f"for-comp-{body.competition_id}"} if body.competition_id else {})}
+    started = pool.spawn(c, u["id"], m, text)
+    audit(c, u, "ai.similar", detail={"count": body.count, "competition_id": body.competition_id}, ip=client_ip(req))
+    return {"started": started, "kind": "multiple choice" if m["type"] == "mcq" else "coding"}
 
 
 class RefImportIn(BaseModel):

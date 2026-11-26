@@ -457,7 +457,8 @@ def run_mcq(draft_id: int, params: dict, user_id: int):
                 q["options"] = q["options"] + ["None of these outputs"][: 4 - len(q["options"])]
             with db.tx(c):
                 qid = create_question(c, QuestionIn(title=q["title"][:150], category=str(params.get("topic") or "Problem Solving")[:60], difficulty=params.get("difficulty") or "Easy",
-                                                    tags=["mcq", "ai"], statement=st, qtype="mcq", options=q["options"], answer=q["answer"], practice=True), {"id": user_id}, "ai")
+                                                    tags=["mcq", "ai"] + ([params["comp_tag"]] if params.get("comp_tag") else []), statement=st, qtype="mcq", options=q["options"],
+                                                    answer=q["answer"], practice=not params.get("comp_tag")), {"id": user_id}, "ai")
             vid = db.one(c, "SELECT latest_version_id AS v FROM questions WHERE id=?", qid)["v"]
             def norm(x):   # same text, or the same number (2.4 == 2.4000000000000004 == 2.40)
                 t = "\n".join(l.rstrip() for l in str(x).strip().splitlines())
@@ -472,8 +473,12 @@ def run_mcq(draft_id: int, params: dict, user_id: int):
                 if match and norm(match) == norm(q["answer"]):
                     log.append("Answer proved: the server ran the program and it prints the marked option." if q["code"] else
                                "Answer checked: a calculation the AI wrote agrees with the marked option. Read it once before approving.")
+                elif not q["code"]:
+                    # the AI's own calculation (Python) disagrees: never change the answer on that basis (Python and C differ,
+                    # e.g. 17 / 5), only ask the organiser to look
+                    log.append(f"Please check this one: the AI's calculation gives {real.strip()[:60]!r}, not the marked answer.")
                 elif match or q["code"]:
-                    # a program's output is the truth; a calculation is trusted only when it lands exactly on one of the options
+                    # a program's output is the truth
                     opts = q["options"] if match else [real.strip()[:300] if o == q["answer"] else o for o in q["options"]]
                     while len(opts) < 4 and q["code"]:
                         opts.append(f"{real.strip()[:280]} (and a newline)" if len(opts) % 2 else "Compilation error")
@@ -703,7 +708,8 @@ def run_draft(draft_id: int, kind: str, params: dict, user_id: int = None):
         if not tests:
             raise RuntimeError("The model produced no test inputs.")
         with db.tx(c):
-            qid = create_question(c, QuestionIn(title=q["title"][:150], category=q["category"][:60], difficulty=q["difficulty"], tags=q["tags"],
+            qid = create_question(c, QuestionIn(title=q["title"][:150], category=q["category"][:60], difficulty=q["difficulty"],
+                                                tags=(q["tags"] + ([params["comp_tag"]] if params.get("comp_tag") else []))[:12],
                                                 statement=q["statement"], input_format=q["input_format"], output_format=q["output_format"],
                                                 constraints=q["constraints"], references=q["reference"], tests=tests), user, "ai")
             c.execute("UPDATE generated_question_drafts SET question_id=?, payload=? WHERE id=?", (qid, json.dumps({**q, "harness": "running"}), draft_id))
