@@ -490,13 +490,14 @@ def arena(comp_id: int, u=Depends(student), c=Depends(conn)):
     qs = [byid[i] for i in contest.assigned(c, comp, u["id"]) if i in byid]
     fixed = contest.fixed_total(c, comp_id)
     scale = fixed / (sum(q["marks"] for q in qs) or 1) if fixed else 1
+    shown = contest.shares([q["marks"] for q in qs], fixed) if fixed else [q["marks"] for q in qs]
     best = {r["question_id"]: r for r in db.all_(c, "SELECT question_id, MAX(score) AS best, MAX(verdict='AC') AS ac, COUNT(*) AS tries FROM submissions "
                                                      "WHERE competition_id=? AND user_id=? AND kind='submit' AND status='done' GROUP BY question_id", comp_id, u["id"])}
     langs = db.jl(comp["languages"])
     problems = []
     for i, q in enumerate(qs):
         b = best.get(q["question_id"], {})
-        pl = problem_payload(c, q, {"id": q["question_id"], "label": contest.label(i), "marks": round(q["marks"] * scale, 1), "best": round((b.get("best") or 0) * scale, 2),
+        pl = problem_payload(c, q, {"id": q["question_id"], "label": contest.label(i), "marks": shown[i], "best": round(shown[i] * (b.get("best") or 0) / (q["marks"] or 1), 2),
                                     "solved": bool(b.get("ac")), "tries": b.get("tries") or 0})
         if pl["options"] and comp["shuffle"]:
             pl["options"] = contest.shuffled_options(pl["options"], u["id"], q["question_id"])
@@ -998,15 +999,20 @@ def review(comp_id: int, u=Depends(student), c=Depends(conn)):
         raise HTTPException(409, "The review opens when the competition ends.")
     from .api_tools import TIPS
     out = []
-    for i, qid in enumerate(contest.assigned(c, comp, u["id"], create=False)):
+    mine = contest.assigned(c, comp, u["id"], create=False)
+    wts = {r["question_id"]: r["marks"] for r in db.all_(c, "SELECT question_id, marks FROM competition_questions WHERE competition_id=?", comp_id)}
+    fixed = contest.fixed_total(c, comp_id)
+    mine_w = [wts[q] for q in mine if q in wts]
+    shown = dict(zip([q for q in mine if q in wts], contest.shares(mine_w, fixed) if fixed else mine_w))
+    for i, qid in enumerate(mine):
         q = db.one(c, "SELECT cq.marks, qv.* FROM competition_questions cq JOIN question_versions qv ON qv.id=cq.version_id WHERE cq.competition_id=? AND cq.question_id=?", comp_id, qid)
         if not q:
             continue
         subs = db.all_(c, "SELECT * FROM submissions WHERE competition_id=? AND user_id=? AND question_id=? AND kind='submit' AND status='done' ORDER BY id", comp_id, u["id"], qid)
         best = max(subs, key=lambda s: (s["score"] or 0, s["id"]), default=None)
         last = subs[-1] if subs else None
-        item = {"label": contest.label(i), "question_id": qid, "title": q["title"], "qtype": q["qtype"] or "standard", "statement": q["statement"], "marks": q["marks"],
-                "attempts": len(subs), "best": best["score"] if best else 0, "solved": any(s["verdict"] == "AC" for s in subs),
+        item = {"label": contest.label(i), "question_id": qid, "title": q["title"], "qtype": q["qtype"] or "standard", "statement": q["statement"], "marks": shown[qid],
+                "attempts": len(subs), "best": round(shown[qid] * (best["score"] or 0) / (q["marks"] or 1), 2) if best else 0, "solved": any(s["verdict"] == "AC" for s in subs),
                 "options": db.jl(q["options"]), "verdict": last["verdict"] if last else None}
         if last:
             item["verdict_name"] = judge.VERDICT_NAMES.get(last["verdict"], last["verdict"])

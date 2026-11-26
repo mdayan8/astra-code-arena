@@ -1,6 +1,7 @@
 """Competition timing/state and leaderboard scoring (pure functions over stored rows => reproducible)."""
 import json
 import random
+import re
 import secrets
 import threading
 import time
@@ -29,6 +30,28 @@ def _split(n, sizes):
         if got[k] < sizes[k]:
             got[k] += 1
     return got
+
+
+def family(title):
+    """Look-alike questions share a family: 'Output MCQ: Operator Precedence (variant) (variant)' == 'Operator Precedence'."""
+    t = re.sub(r"\s*\((?:variant|copy)\)", "", (title or "").lower(), flags=re.I)
+    t = re.sub(r"^[^:]{1,25}:\s*", "", t)   # "Output MCQ: ", "Logic: ", "Fix the Bug: "
+    return re.sub(r"\W+", " ", t).strip() or (title or "")
+
+
+def sample_distinct(rng, items, k, used):
+    """k random items, no two of the same family (and none of a family already in `used`) while that is possible."""
+    items = list(items)
+    rng.shuffle(items)
+    pick = []
+    for q in items:   # first pass: one per family
+        f = family(q.get("title"))
+        if len(pick) < k and f not in used:
+            pick.append(q); used.add(f)
+    for q in items:   # not enough families: fill with the rest
+        if len(pick) < k and q not in pick:
+            pick.append(q)
+    return pick
 
 
 def rotated(ids, k):
@@ -88,15 +111,14 @@ def fixed_total(c, cid):
 def draw_mix(pool, n, mix, shuffle, rng):
     """Exactly the asked number of each kind for every student (e.g. 6 fix-the-bug + 4 multiple choice); any shortfall is
     filled from the rest of the list so everyone still gets n questions."""
-    by = {}
+    by, used, pick = {}, set(), []
     for q in pool:
-        by.setdefault(KIND.get(q["qtype"] or "standard", "coding"), []).append(q["question_id"])
-    pick = []
+        by.setdefault(KIND.get(q["qtype"] or "standard", "coding"), []).append(q)
     for kind, k in mix.items():
-        have = [i for i in by.get(KIND.get(kind, kind), []) if i not in pick]
-        pick += rng.sample(have, min(k, len(have)))
-    rest = [q["question_id"] for q in pool if q["question_id"] not in pick]
-    pick += rng.sample(rest, max(0, min(n - len(pick), len(rest))))
+        have = [q for q in by.get(KIND.get(kind, kind), []) if q["question_id"] not in pick]
+        pick += [q["question_id"] for q in sample_distinct(rng, have, min(k, len(have)), used)]
+    rest = [q for q in pool if q["question_id"] not in pick]
+    pick += [q["question_id"] for q in sample_distinct(rng, rest, max(0, min(n - len(pick), len(rest))), used)]
     pick = pick[:n] if n else pick
     if shuffle:
         rng.shuffle(pick)
@@ -110,15 +132,25 @@ def draw_for(pool, n, shuffle, rng):
         for q in pool:
             groups.setdefault(("answer" if q["qtype"] in ANSWER_TYPES else "code", q["difficulty"]), []).append(q)
         keys = sorted(groups)
-        pick = []
+        pick, used = [], set()
         for k, m in zip(keys, _split(n, [len(groups[k]) for k in keys])):
-            pick += rng.sample(groups[k], m)
+            pick += sample_distinct(rng, groups[k], m, used)
         chosen = {q["question_id"] for q in pick}
         pool = [q for q in pool if q["question_id"] in chosen]
     ids = [q["question_id"] for q in pool]
     if shuffle:
         rng.shuffle(ids)
     return ids
+
+
+def shares(marks, total):
+    """Weights -> marks that add up to exactly `total` at one decimal (largest remainder), so a paper never shows 99.9."""
+    w = sum(marks) or 1
+    raw = [m * total * 10 / w for m in marks]
+    out = [int(r) for r in raw]
+    for i in sorted(range(len(raw)), key=lambda i: -(raw[i] - out[i]))[:round(total * 10) - sum(out)]:
+        out[i] += 1
+    return [o / 10 for o in out]
 
 
 def label(i):
@@ -131,7 +163,7 @@ def assigned(c, comp, uid, create=True):
     p = db.one(c, "SELECT questions FROM competition_participants WHERE competition_id=? AND user_id=?", comp["id"], uid)
     if p and p["questions"]:
         return db.jl(p["questions"])
-    pool = db.all_(c, "SELECT cq.question_id, q.difficulty, qv.qtype FROM competition_questions cq JOIN questions q ON q.id=cq.question_id "
+    pool = db.all_(c, "SELECT cq.question_id, q.difficulty, qv.qtype, qv.title FROM competition_questions cq JOIN questions q ON q.id=cq.question_id "
                       "JOIN question_versions qv ON qv.id=cq.version_id WHERE cq.competition_id=? ORDER BY cq.ordinal", comp["id"])
     if not comp["draw"] or comp["draw"] >= len(pool):
         base = [q["question_id"] for q in pool]
