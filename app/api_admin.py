@@ -348,6 +348,8 @@ def comp_full(c, comp):
     from . import pool
     d["pool"] = pool.info(c, comp["id"])
     d["explain"] = db.setting(c, f"explain:{comp['id']}", "1") == "1"
+    d["variety"] = contest.variety(db.all_(c, "SELECT q.difficulty, qv.qtype FROM competition_questions cq JOIN questions q ON q.id=cq.question_id "
+                                              "JOIN question_versions qv ON qv.id=cq.version_id WHERE cq.competition_id=?", comp["id"]), comp["draw"] or 0, bool(comp["shuffle"]))
     d["submission_count"] = db.one(c, "SELECT COUNT(*) AS n FROM submissions WHERE competition_id=? AND kind='submit'", comp["id"])["n"]
     d["admins"] = db.all_(c, "SELECT u.id, u.name, u.username FROM competition_admins ca JOIN users u ON u.id=ca.user_id WHERE ca.competition_id=?", comp["id"])
     d["announcements"] = db.all_(c, "SELECT * FROM announcements WHERE competition_id=? ORDER BY id DESC", comp["id"])
@@ -487,6 +489,24 @@ def quick_round(body: QuickIn, req: Request, u=Depends(admin), c=Depends(conn)):
     if contest.get_comp(c, comp["id"])["status"] != "live":   # start time is now, so it usually starts by itself
         comp_action(comp["id"], ActionIn(action="start"), req, u, c)
     return {"id": comp["id"], "code": code, "questions": len(chosen), "problems": short}
+
+
+class VariantsIn(BaseModel):
+    per: int = Field(default=1, ge=1, le=3)
+
+
+@router.post("/competitions/{cid}/variants")
+def make_variants(cid: int, body: VariantsIn, req: Request, u=Depends(admin), c=Depends(conn)):
+    """Instant number variants of the predict-the-output questions in this competition (no AI)."""
+    comp_or_404(c, cid, u)
+    from . import pool
+    n = pool.number_variants(c, cid, body.per, u["id"])
+    if n < 0:
+        raise HTTPException(409, "Variants can only be added before the competition starts.")
+    if n == 0:
+        raise HTTPException(400, "Add some predict-the-output questions (with a C program) first; those are the ones that get new numbers. Or wait for the current job to finish.")
+    audit(c, u, "competition.variants", "competition", cid, cid, {"questions": n, "per": body.per}, client_ip(req))
+    return {"questions": n, "per": body.per}
 
 
 class PoolIn(BaseModel):

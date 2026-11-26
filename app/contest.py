@@ -31,6 +31,33 @@ def _split(n, sizes):
     return got
 
 
+def rotated(ids, k):
+    """Order for the k-th student when everyone gets the same questions: a rotation, reversed every other round,
+    so students who start one after another never begin with the same question (and orders repeat as rarely as possible)."""
+    if not ids:
+        return ids
+    n = len(ids)
+    r = ids[k % n:] + ids[:k % n]
+    return list(reversed(r)) if (k // n) % 2 else r
+
+
+def variety(pool, n, shuffle):
+    """How many different papers the list can make: sets of questions (same mix for everyone) x orders."""
+    from math import comb, factorial
+    if not pool:
+        return {"sets": 0, "orders": 0, "per_student": 0}
+    if not n or n >= len(pool):
+        return {"sets": 1, "orders": (2 * len(pool) if len(pool) > 2 else len(pool)) if shuffle else 1, "per_student": len(pool)}
+    groups = {}
+    for q in pool:
+        groups.setdefault(("answer" if q["qtype"] in ANSWER_TYPES else "code", q["difficulty"]), []).append(q)
+    keys = sorted(groups)
+    sets = 1
+    for k, m in zip(keys, _split(n, [len(groups[k]) for k in keys])):
+        sets *= comb(len(groups[k]), m)
+    return {"sets": sets, "orders": factorial(n) if shuffle else 1, "per_student": n}
+
+
 def draw_for(pool, n, shuffle, rng):
     """pool: [{question_id, difficulty, qtype}] in organiser order. Every student gets the same mix of question kind and difficulty."""
     if n and n < len(pool):
@@ -56,7 +83,15 @@ def assigned(c, comp, uid, create=True):
         return db.jl(p["questions"])
     pool = db.all_(c, "SELECT cq.question_id, q.difficulty, qv.qtype FROM competition_questions cq JOIN questions q ON q.id=cq.question_id "
                       "JOIN question_versions qv ON qv.id=cq.version_id WHERE cq.competition_id=? ORDER BY cq.ordinal", comp["id"])
-    ids = draw_for(pool, comp["draw"] or 0, bool(comp["shuffle"]), random.Random(secrets.randbits(64)))
+    if not comp["draw"] or comp["draw"] >= len(pool):
+        base = [q["question_id"] for q in pool]
+        if comp["shuffle"]:
+            random.Random(comp["id"]).shuffle(base)   # one mixed base order per competition, then rotated per student
+            k = db.one(c, "SELECT COUNT(*) AS n FROM competition_participants WHERE competition_id=? AND questions IS NOT NULL", comp["id"])["n"]
+            base = rotated(base, k)
+        ids = base
+    else:   # a draw from a bigger list: own questions, same mix, random order
+        ids = draw_for(pool, comp["draw"], bool(comp["shuffle"]), random.Random(secrets.randbits(64)))
     if create and p:
         c.execute("UPDATE competition_participants SET questions=? WHERE competition_id=? AND user_id=? AND questions IS NULL", (json.dumps(ids), comp["id"], uid))
         return db.jl(db.one(c, "SELECT questions FROM competition_participants WHERE competition_id=? AND user_id=?", comp["id"], uid)["questions"])

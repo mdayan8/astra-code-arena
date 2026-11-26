@@ -763,6 +763,39 @@ def run():
     evA.post(f"{A}/competitions/{cd['id']}/explain", {"on": True})
     evA.post(f"{A}/competitions/{cd['id']}/action", {"action": "end"})
     ok("each student gets their own 4 of 10 questions (same easy/medium mix, own order, fixed on reload, others refused); 2 warnings cost 2 x 10%")
+    outq = [x for x in mcqs if x["title"].startswith("Output MCQ")][:5]
+    cr = evA.post(f"{A}/competitions", {**base, "title": "Rotation", "code": "ROTATE-1", "start_at": int(time.time()) + 3600, "draw": 0, "shuffle": True})
+    evA.put(f"{A}/competitions/{cr['id']}/questions", {"questions": [{"question_id": x["id"], "marks": 10} for x in outq]})
+    v = evA.post(f"{A}/competitions/{cr['id']}/variants", {"per": 1})
+    assert v["questions"] == 5, v
+    for _ in range(90):
+        cd2 = evA.get(f"{A}/competitions/{cr['id']}")
+        if not cd2["pool"]["working"] and len(cd2["questions"]) > 5:
+            break
+        time.sleep(1)
+    added = cd2["questions"][5:]
+    assert 3 <= len(added) <= 5, len(added)
+    for q in added:
+        full = sup.get(f"{A}/questions/{q['question_id']}")
+        orig = next(x for x in outq if full["version"]["title"].startswith(x["title"]))
+        o = sup.get(f"{A}/questions/{orig['id']}")
+        assert full["status"] == "approved" and full["references"]["answer"] in full["version"]["options"] and len(set(full["version"]["options"])) == 4
+        assert full["version"]["statement"] != o["version"]["statement"] and full["references"]["answer"] != o["references"]["answer"]
+        assert o["references"]["answer"].strip() in [x.strip() for x in full["version"]["options"]]   # the old answer is a trap option
+    evA.put(f"{A}/competitions/{cr['id']}/questions", {"questions": [{"question_id": x["id"], "marks": 10} for x in outq]})   # back to the 5 originals
+    evA.post(f"{A}/competitions/{cr['id']}/action", {"action": "publish"})
+    extra = [student(f"4PM23CS{901 + k}", f"Rotor {k}")[0] for k in range(2)]
+    firsts, orders = [], set()
+    for s in (s1, s2, s3, *extra):
+        s.post(f"{BASE}/api/student/competitions/{cr['id']}/join")
+    evA.post(f"{A}/competitions/{cr['id']}/action", {"action": "start"})
+    for s in (s1, s2, s3, *extra):
+        ids = [p["id"] for p in s.get(f"{BASE}/api/student/competitions/{cr['id']}/arena")["problems"]]
+        assert sorted(ids) == sorted(x["id"] for x in outq)
+        firsts.append(ids[0]); orders.add(tuple(ids))
+    assert len(set(firsts)) == 5 and len(orders) == 5, firsts      # 5 students, same 5 questions, each starts on a different one
+    evA.post(f"{A}/competitions/{cr['id']}/action", {"action": "end"})
+    ok("same questions for everyone: rotated order, every student starts on a different question; number variants made instantly with answers proved by running")
     qr = evA.post(f"{A}/competitions/quick", {"mcq": 2, "coding": 1, "minutes": 10})
     qc = evA.get(f"{A}/competitions/{qr['id']}")
     assert qc["status"] == "live" and len(qc["questions"]) == 3 and qc["allow_late_join"] and qr["code"].startswith("TEST-")

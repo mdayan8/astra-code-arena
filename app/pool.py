@@ -128,5 +128,46 @@ def _grow(cid, n):
         c.close()
 
 
+def number_variants(c, cid, per, uid):
+    """Instant variants of the competition's predict-the-output questions (changed numbers, answers proved by running).
+    Returns how many questions can be varied; the work runs in the background."""
+    from . import variants
+    comp = db.one(c, "SELECT status FROM competitions WHERE id=?", cid)
+    if not comp or comp["status"] not in ("draft", "published"):
+        return -1
+    temps = [q for q in db.all_(c, "SELECT cq.question_id, cq.marks, qv.qtype, qv.statement FROM competition_questions cq JOIN question_versions qv ON qv.id=cq.version_id "
+                                   "WHERE cq.competition_id=?", cid) if q["qtype"] in ("mcq", "output", "trace") and "```c" in (q["statement"] or "")]
+    if not temps:
+        return 0
+    with _lock:
+        if cid in _busy:
+            return 0
+        _busy.add(cid)
+
+    def work():
+        c2 = db.connect()
+        try:
+            for t in temps:
+                vid = db.one(c2, "SELECT latest_version_id AS v FROM questions WHERE id=?", t["question_id"])["v"]
+                for _ in range(per):
+                    nid = variants.make(c2, t["question_id"], uid, lambda code: ai._run(c2, t["question_id"], vid, uid, "c", code))
+                    if not nid:
+                        continue
+                    with db.tx(c2):
+                        if db.one(c2, "SELECT status FROM competitions WHERE id=?", cid)["status"] not in ("draft", "published"):
+                            return
+                        c2.execute("INSERT OR IGNORE INTO competition_questions(competition_id,question_id,version_id,ordinal,marks) VALUES(?,?,"
+                                   "(SELECT latest_version_id FROM questions WHERE id=?),(SELECT COALESCE(MAX(ordinal),0)+1 FROM competition_questions WHERE competition_id=?),?)",
+                                   (cid, nid, nid, cid, t["marks"]))
+        except Exception as e:
+            db.log_error(c2, "variants", e)
+        finally:
+            with _lock:
+                _busy.discard(cid)
+            c2.close()
+    threading.Thread(target=work, daemon=True).start()
+    return len(temps)
+
+
 def info(c, cid):
     return {"added": len(_added(c, cid)), "max": MAX_ADDED, "working": cid in _busy, "per_students": PER_STUDENTS}

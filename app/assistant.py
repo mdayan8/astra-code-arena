@@ -130,6 +130,9 @@ def parse(text, plan=None, departments=(), now=None):
         p["languages"] = sorted(set(langs), key=["c", "cpp", "python", "java", "javascript"].index)
     if re.search(r"\b(?:start|starts|begin|starting) (?:it )?(?:right )?now\b|\bright now\b|immediately", t):
         p["start_at"] = now.strftime("%Y-%m-%dT%H:%M")
+    m = re.search(r"\b(\d{1,2})\s*(?:sets|versions|papers)\b", t)
+    if m:
+        p["sets"], p["unique"] = max(2, min(10, int(m.group(1)))), True
     if re.search(r"different (?:questions?|sets?|papers?)|unique (?:questions?|sets?)|own (?:set|questions)|randomi[sz]e|each student (?:gets|sees) (?:a )?different|no two students|shuffle (?:the )?questions", t) and not re.search(r"\bno\b[^.]{0,12}different|same questions? for (?:everyone|all)", t):
         p["unique"] = True
     elif re.search(r"same questions? for (?:everyone|all)|everyone (?:gets|sees) the same|no,? same", t):
@@ -193,7 +196,7 @@ def pick(c, plan):
                       "WHERE cq.question_id=q.id AND co.status IN ('published','live','paused'))")
     random.shuffle(pool)
     chosen, short, missing = [], [], []
-    mult = 3 if plan.get("unique") else 1
+    mult = min(10, max(2, int(plan.get("sets") or 3))) if plan.get("unique") else 1
     for s0 in plan.get("questions") or []:
         s = {**s0, "count": s0["count"] * mult}
         words = [w for w in s.get("topic", "").split() if len(w) > 1]
@@ -291,6 +294,7 @@ if __name__ == "__main__":  # self-check
     p4 = parse("hard", {"questions": [{"count": 2, "type": "mcq", "difficulty": None, "topic": ""}]}, [], now)
     assert p4["questions"][0]["difficulty"] == "Challenging" and p4["level"] == "Challenging", p4
     assert parse("no, same questions for everyone", {"unique": True}, [], now)["unique"] is False
+    assert parse("10 sets", {}, [], now)["sets"] == 10 and parse("10 sets", {}, [], now)["unique"]
     assert parse("simple input output only", {}, [], now)["tests"] is False and parse("with hidden test cases", {}, [], now)["tests"] is True
     assert parse("5 logical thinking questions", {}, [], now)["questions"] == [{"count": 5, "type": "mcq", "difficulty": None, "topic": "logical"}]
     assert parse("10 moderate mcq on pointers and 2 high coding", {}, [], now)["questions"] == [
