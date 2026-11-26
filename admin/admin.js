@@ -24,11 +24,11 @@ function refPicker(holder) {
   const bind = (root) => {
     const inp = $('#' + id, root), chip = $(`[data-chip="${id}"]`, root);
     const draw = () => { chip.innerHTML = holder.ref ? `<span class="chip">${ico('file', 12)} ${esc(holder.refName)} · ${holder.refChars >= 1000 ? Math.round(holder.refChars / 1000) + 'k' : holder.refChars} characters read <button type="button" class="linkbtn" data-unref>${ico('x', 11)}</button></span>` : '';
-      $('[data-unref]', chip)?.addEventListener('click', () => { holder.ref = ''; draw(); }); };
+      $('[data-unref]', chip)?.addEventListener('click', () => { holder.ref = ''; holder.found = null; holder.onFound?.(null); draw(); }); };
     inp.onchange = async () => { const f = inp.files[0]; if (!f) return; const fd = new FormData(); fd.append('file', f);
       chip.innerHTML = '<span class="small muted"><span class="spin" style="width:11px;height:11px"></span> Reading the document…</span>';
-      try { const r = await api('POST', `${A}/ai/reference`, fd); Object.assign(holder, { ref: r.ref, refName: r.name, refChars: r.chars }); draw();
-        toast(`Read ${r.name}: questions will follow its topics.${r.warnings.length ? ' ' + r.warnings[0] : ''}`, 'ok'); }
+      try { const r = await api('POST', `${A}/ai/reference`, fd); Object.assign(holder, { ref: r.ref, refName: r.name, refChars: r.chars, found: r.found }); draw();
+        toast(`Read ${r.name}${r.found?.total ? `: ${r.found.total} questions found` : ''}.${r.warnings.length ? ' ' + r.warnings[0] : ''}`, 'ok'); holder.onFound?.(r); }
       catch (e) { holder.ref = ''; draw(); fail(e); } inp.value = ''; };
     draw();
   };
@@ -939,7 +939,7 @@ const aiOff = (st) => `<div class="card pad aioff"><h3 style="margin:0">${ico('a
   <p class="tiny muted" style="margin:10px 0 0">Already use Ollama? Any model you have pulled is found by itself. Everything except this page works without AI.</p></div>`;
 async function aiPage() {
   const v = view('AI Studio', skeleton(4), 'ai');
-  const [st, drafts, bank] = await Promise.all([GET(`${A}/ai/status`), GET(`${A}/drafts?source=ai`), GET(`${A}/questions`)]);
+  const [st, drafts, bank, comps] = await Promise.all([GET(`${A}/ai/status`), GET(`${A}/drafts?source=ai`), GET(`${A}/questions`), GET(`${A}/competitions`).catch(() => [])]);
   const on = st.enabled && st.reachable !== false;
   const kind = sessionStorage.getItem('ai:kind') || 'code';
   const KINDS = [['code', 'code', 'Coding problem', 'A full problem with solutions and hidden tests'], ['mcq', 'check', 'Multiple-choice set', 'Predict-the-output or concept questions'], ['var', 'layers', 'New version of a question', 'Same idea, new story and numbers']];
@@ -954,7 +954,7 @@ async function aiPage() {
       <div class="row" style="flex-wrap:nowrap;gap:8px"><input class="input lg" name="text" required maxlength="1000" placeholder="e.g. 6 mcq on loops, 2 fix the bug on arrays, 2 coding on strings" style="flex:1;min-width:0">
         <select class="select" name="level" style="width:auto;height:44px" title="Level for every part that does not name one"><option value="">Any level</option><option value="Easy">Easy</option><option value="Intermediate">Intermediate</option><option value="Challenging">Hard</option></select>
         <button class="btn primary lg" ${on ? '' : 'disabled'}>${ico('sparkles', 15)} Write</button></div>
-      <div class="row" style="gap:8px;margin-top:8px" id="askRef"></div>
+      <div class="row" style="gap:8px;margin-top:8px" id="askRef"></div><div id="askFound"></div>
       <div class="row wrap" style="margin-top:10px;gap:6px">${['10 easy predict the output on loops', '5 logical reasoning mcq', '3 fix the bug on arrays', '6 moderate mcq on data structures', '2 easy coding on strings', '8 questions from the attached notes'].map((x) => `<button type="button" class="chipbtn" data-ask="${esc(x)}">${esc(x)}</button>`).join('')}</div><div id="askOut"></div></form>
     <div class="how3" style="margin-top:16px"><div><b>1</b> You describe it</div><div><b>2</b> The AI writes it and the server tests it</div><div><b>3</b> You review and approve</div></div>
     <section class="card pad" style="margin-top:16px"><h3 style="margin:0 0 10px">Or fill in the details yourself</h3>
@@ -977,6 +977,25 @@ async function aiPage() {
   $$('[data-kind]', v).forEach((b) => b.onclick = () => showKind(b.dataset.kind)); showKind(kind);
   $$('[data-ask]', v).forEach((b) => b.onclick = () => { $('#askf [name=text]').value = b.dataset.ask; $('#askf [name=text]').focus(); });
   const askRef = { ref: '' }, arp = refPicker(askRef);
+  // the file has its own questions: take all of them as they are (no AI needed)
+  askRef.onFound = (r) => {
+    const f = r?.found, box = $('#askFound');
+    if (!f || !f.total) { box.innerHTML = r ? '<div class="small muted" style="margin-top:8px">No separate numbered questions found in this file; it will be used as reference material for the AI.</div>' : ''; return; }
+    const drafts = comps.filter((x) => x.status === 'draft');
+    box.innerHTML = `<div class="foundbox"><div class="row between wrap" style="gap:10px"><div><b>${f.total} questions found in ${esc(r.name)}</b>
+        <div class="small muted">${f.mcq_ready} multiple choice with answers (ready to use)${f.mcq_no_answer ? ` · ${f.mcq_no_answer} multiple choice without an answer (you pick it)` : ''}${f.other ? ` · ${f.other} other (saved as drafts to finish)` : ''}</div></div></div>
+      <div class="grid g4" style="margin-top:10px">${fld('Level', sel('fdiff', [['Easy', 'Easy'], ['Intermediate', 'Intermediate'], ['Challenging', 'Hard']], $('#askf [name=level]').value || 'Easy'))}
+        ${fld('Category', '<input class="input" name="fcat" placeholder="e.g. Unit 3 quiz">')}
+        ${fld('Add to competition (optional)', sel('fcomp', [['', 'No, only the question bank'], ...drafts.map((x) => [String(x.id), `${x.code} · ${x.title}`])], ''), drafts.length ? 'draft competitions' : 'create a draft competition first')}
+        ${fld('Questions per student', `<input class="input" type="number" name="fper" min="0" max="200" value="0">`, `0 = all ${f.mcq_ready}; less = each student gets their own set`)}</div>
+      <div class="row" style="gap:8px;margin-top:10px"><button type="button" class="btn primary" id="takeAll">${ico('check', 14)} Add all ${f.total} as they are</button><span class="tiny muted">No AI needed. Answers come from the file.</span></div></div>`;
+    $('#takeAll').onclick = () => busy($('#takeAll'), async () => {
+      const v = (n) => box.querySelector(`[name=${n}]`).value;
+      const res = await POST(`${A}/ai/reference/${askRef.ref}/import`, { difficulty: v('fdiff'), category: v('fcat'), competition_id: v('fcomp') ? Number(v('fcomp')) : null, per_student: Number(v('fper') || 0) });
+      box.innerHTML = `<div class="notice ok" style="margin-top:10px">${ico('check', 14)} ${res.ready} question(s) ready${res.in_competition ? ` and added to the competition` : ' in the Question Bank'}${res.drafts ? `; ${res.drafts} saved as drafts to finish (tag <b>to-finish</b> or missing answer)` : ''}.
+        ${res.competition_id ? `<a href="#/competitions/${res.competition_id}">Open the competition ${ico('right', 12)}</a>` : `<a href="#/questions">Open the Question Bank ${ico('right', 12)}</a>`}</div>`;
+    });
+  };
   $('#askRef').innerHTML = arp.html + '<span class="tiny muted">Optional: attach notes, a syllabus or an old question paper; new questions follow its topics and style.</span>'; arp.bind($('#askf'));
   const askSend = async (extra = {}) => { const r = await POST(`${A}/ai/prompt`, { ...formData($('#askf')), ref: askRef.ref, ...extra });
     if (r.ask) {   // the AI needs one answer first (for example: hidden test cases or simple examples)

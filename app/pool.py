@@ -24,7 +24,7 @@ def new_draft(c, uid, request, title=""):
 def spawn(c, uid, m, reference=""):
     """Start writing m = {count, type, difficulty, topic} questions, optionally based on a reference document.
     Returns how many were started (0 = this type cannot be written)."""
-    typ, n = m.get("type"), max(1, min(int(m.get("count") or 1), 10))
+    typ, n = m.get("type"), max(1, min(int(m.get("count") or 1), 40))
     topic = (m.get("topic") or "").strip() or ("the topics in the reference material" if reference else "")
     p = {"difficulty": m.get("difficulty") or "Easy"}
     if reference:
@@ -35,8 +35,11 @@ def spawn(c, uid, m, reference=""):
         if logic:
             topic = f"logical reasoning puzzles ({topic}): number series, ratios, time and work, directions, seating, coding-decoding"
         p.update(style=style, count=n, topic=topic or ("logical reasoning: series, ratios, directions" if logic else "C programming basics" if style == "output" else "data structures and algorithms basics"))
-        gid = new_draft(c, uid, p, f"{n} multiple-choice: {p['topic']}")
-        threading.Thread(target=ai.run_mcq, args=(gid, p, uid), daemon=True).start()
+        # sets of up to 5 (small models lose track beyond that); with a document, each set reads a different part of it
+        for k in range(0, n, 5):
+            pk = {**p, "count": min(5, n - k), **({"reference": ai.chunk(reference, k // 5, 4000)} if reference else {})}
+            gid = new_draft(c, uid, pk, f"{pk['count']} multiple-choice: {p['topic']}" + (f" (part {k // 5 + 1})" if n > 5 else ""))
+            threading.Thread(target=ai.run_mcq, args=(gid, pk, uid), daemon=True).start()
         return n
     if typ in (None, "standard", "debug"):
         p.update(topic=topic or "arrays, strings and loops", language="C and Python", samples=2, debug=typ == "debug")

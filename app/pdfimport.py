@@ -333,9 +333,32 @@ def ocr_page(page):
             return ""
 
 
+NUMBERED = re.compile(r"(?im)^[ \t]*(?:(?:question|problem|prob\.?|task|exercise|q)[ \t]*[-#:.]?[ \t]*)?(\d{1,3})[ \t]*[.):\]][ \t]*(?=\S)")
+
+
+def numbered_starts(text):
+    """Start offsets of questions numbered 1, 2, 3 ... (with or without 'Q'/'Question'). Only the longest run that counts up
+    by one is used, so numbered steps or options inside a question do not split it."""
+    cands = [(int(m.group(1)), m.start()) for m in NUMBERED.finditer(text)]
+    best = []
+    for i, (n, pos) in enumerate(cands):
+        run, want = [pos], n + 1
+        for n2, pos2 in cands[i + 1:]:
+            if n2 == want:
+                run.append(pos2)
+                want += 1
+        if len(run) > len(best):
+            best = run
+    return best if len(best) >= 2 else []
+
+
 def split_questions(text: str):
-    """Find question boundaries by headings like 'Question 1', 'Problem 2:', 'Q3.', '4) Title'."""
+    """Find question boundaries: headings like 'Question 1', 'Problem 2:', 'Q3.' or plain numbering '1.', '2)', ..."""
     marks = [m for m in re.finditer(HEAD, text, re.I)]
+    starts = numbered_starts(text)
+    if len(marks) < 2 and len(starts) > len(marks):   # no 'Question N' headings: use plain numbering 1. 2) 3. ...
+        bounds = [(a, starts[i + 1] if i + 1 < len(starts) else len(text)) for i, a in enumerate(starts)]
+        return [(a, b) for a, b in bounds if len(text[a:b].strip()) > 10] or [(0, len(text))]
     if not marks:
         return [(0, len(text))]
     bounds = []
@@ -344,6 +367,59 @@ def split_questions(text: str):
         end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
         bounds.append((start, end))
     return [(a, b) for a, b in bounds if len(text[a:b].strip()) > 40] or [(0, len(text))]
+
+
+OPT_LINE = re.compile(r"(?im)^[ \t]*\(?([A-Da-d])[\).:\]][ \t]+(.+?)[ \t]*$")
+OPT_INLINE = re.compile(r"\(([A-Da-d])\)\s*(.+?)(?=\s*\([A-Da-d]\)|$)", re.S)
+ANSWER = re.compile(r"(?im)^[ \t]*(?:correct[ \t]+)?(?:answer|ans|key)[ \t]*[:.\-=)]*[ \t]*\(?([A-Da-d])?\)?[ \t]*[).:\-]?[ \t]*(.*)$")
+
+
+def find_mcq(block: str):
+    """A multiple-choice question as written in a paper: stem, options (A-D, on lines or inline) and the answer if given.
+    -> dict or None when the block has no options."""
+    text = block.strip()
+    ans = ANSWER.search(text)
+    body = text[:ans.start()] if ans else text
+    opts = list(OPT_LINE.finditer(body))
+    if len(opts) >= 2:
+        stem = body[:opts[0].start()]
+        options = [m.group(2).strip() for m in opts]
+        letters = [m.group(1).upper() for m in opts]
+    else:
+        first = re.search(r"\([Aa]\)", body)
+        inl = list(OPT_INLINE.finditer(body[first.start():])) if first else []
+        if len(inl) < 2:
+            return None
+        stem = body[:first.start()]
+        options = [m.group(2).strip().rstrip(",;") for m in inl]
+        letters = [m.group(1).upper() for m in inl]
+    stem = re.sub(r"^\s*(?:(?:question|q)\s*[-#:.]?\s*)?\d{1,3}\s*[.):\]]\s*", "", stem.strip(), flags=re.I).strip()
+    answer = None
+    if ans:
+        letter, rest = (ans.group(1) or "").upper(), (ans.group(2) or "").strip()
+        if letter in letters:
+            answer = options[letters.index(letter)]
+        elif rest:
+            answer = next((o for o in options if o.strip().lower() == rest.lower()), None)
+    if not stem or len(set(options)) < 2:
+        return None
+    return {"statement": stem, "options": options[:6], "answer": answer}
+
+
+def find_questions(text: str):
+    """Every question in a document, in order. Multiple choice is recognised with its options and answer;
+    anything else is kept as written for review."""
+    out = []
+    for a, b in split_questions(text):
+        block = text[a:b].strip()
+        if not block:
+            continue
+        mcq = find_mcq(block)
+        if mcq:
+            out.append({"kind": "mcq", **mcq, "raw": block[:6000]})
+        else:
+            out.append({"kind": "other", "raw": block[:6000]})
+    return out
 
 
 def parse_block(block: str):
@@ -435,3 +511,40 @@ def process(doc_id: int):
         db.log_error(c, "import", e)
     finally:
         c.close()
+
+
+if __name__ == "__main__":
+    paper = """C Programming Quiz - Unit 2
+1. What is the size of int on a 32-bit compiler?
+A) 2 bytes
+B) 4 bytes
+C) 8 bytes
+D) 1 byte
+Answer: B
+2) Which loop runs at least once?
+(a) for (b) while (c) do-while (d) none
+Ans: c
+3. Which header declares printf?
+a. stdlib.h
+b. stdio.h
+c. string.h
+d. math.h
+4. Write a program to reverse a number.
+Input: 123  Output: 321
+5. What does 7 % 3 give?
+A) 1
+B) 2
+C) 3
+D) 0
+Answer: 1
+"""
+    qs = find_questions(paper)
+    assert len(qs) == 5, [q["raw"][:30] for q in qs]
+    assert qs[0]["kind"] == "mcq" and qs[0]["answer"] == "4 bytes" and qs[0]["statement"].startswith("What is the size"), qs[0]
+    assert qs[1]["kind"] == "mcq" and qs[1]["options"] == ["for", "while", "do-while", "none"] and qs[1]["answer"] == "do-while", qs[1]
+    assert qs[2]["kind"] == "mcq" and qs[2]["answer"] is None and len(qs[2]["options"]) == 4, qs[2]
+    assert qs[3]["kind"] == "other" and "reverse" in qs[3]["raw"]
+    assert qs[4]["answer"] == "1", qs[4]   # 'Answer: 1' is the option text, not a letter
+    steps = "1. Read n.\n2. Loop i from 1 to n.\n3. Print the sum.\nSample: 3 -> 6"
+    assert len(find_questions("Problem 1: Sum\n" + steps + "\n\nProblem 2: Max\nRead two numbers and print the larger one.")) == 2
+    print("pdfimport self-check ok")

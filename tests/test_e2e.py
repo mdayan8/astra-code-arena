@@ -834,6 +834,23 @@ def run():
     sup.req("POST", f"{A}/ai/reference", 400, files={"file": ("fake.pdf", b"hello", "application/pdf")})
     sup.req("POST", f"{A}/ai/reference", 400, files={"file": ("a.exe", b"MZ....", "application/octet-stream")})
     sup.post(f"{A}/ai/prompt", {"text": "3 mcq", "ref": rf["ref"]}, expect=503)        # no AI on this machine: refused cleanly
+    lines = []
+    for k in range(1, 12):   # a typical question paper: 11 numbered multiple-choice questions, one without an answer, one coding question
+        lines += [f"{k}. What is {k} + {k} in C?", f"A) {2 * k}", f"B) {2 * k + 1}", f"C) {k}", f"D) {k * k + 5}"] + ([f"Answer: A"] if k != 7 else [])
+    lines += ["12. Write a program that reads n and prints n squared.", "Input: 4  Output: 16"]
+    doc = pymupdf.open(); pg = doc.new_page(height=1400)
+    pg.insert_text((30, 30), "Unit 1 quiz\n" + "\n".join(lines), fontsize=8)
+    paper = sup.req("POST", f"{A}/ai/reference", files={"file": ("unit1-quiz.pdf", doc.tobytes(), "application/pdf")})
+    f = paper["found"]
+    assert f["total"] == 12 and f["mcq_ready"] == 10 and f["mcq_no_answer"] == 1 and f["other"] == 1, f
+    cfile = evA.post(f"{A}/competitions", {**base, "title": "From file", "code": "FROM-FILE", "start_at": int(time.time()) + 3600})
+    imp = evA.post(f"{A}/ai/reference/{paper['ref']}/import", {"difficulty": "Easy", "category": "Unit 1", "competition_id": cfile["id"], "per_student": 5})
+    assert imp["ready"] == 10 and imp["drafts"] == 2 and imp["in_competition"] == 10, imp
+    cfd = evA.get(f"{A}/competitions/{cfile['id']}")
+    assert len(cfd["questions"]) == 10 and cfd["draw"] == 5 and all(q["q_status"] == "approved" for q in cfd["questions"])
+    q3 = sup.get(f"{A}/questions/{cfd['questions'][2]['question_id']}")
+    assert q3["version"]["qtype"] == "mcq" and q3["references"]["answer"] == "6" and q3["version"]["options"] == ["6", "7", "3", "14"], q3["version"]
+    ok("question paper (PDF): all 12 questions found; 10 with answers ready and added to a competition (5 per student), 2 saved to finish")
     if not EXTERNAL:
         from app import ai, db as _db
         c = _db.connect()
