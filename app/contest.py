@@ -143,14 +143,15 @@ def draw_for(pool, n, shuffle, rng):
     return ids
 
 
-def shares(marks, total):
-    """Weights -> marks that add up to exactly `total` at one decimal (largest remainder), so a paper never shows 99.9."""
+def shares(marks, total, places=1):
+    """Weights -> marks that add up to exactly `total` at `places` decimals (largest remainder), so a paper never shows 99.9."""
+    f = 10 ** places
     w = sum(marks) or 1
-    raw = [m * total * 10 / w for m in marks]
+    raw = [m * total * f / w for m in marks]
     out = [int(r) for r in raw]
-    for i in sorted(range(len(raw)), key=lambda i: -(raw[i] - out[i]))[:round(total * 10) - sum(out)]:
+    for i in sorted(range(len(raw)), key=lambda i: -(raw[i] - out[i]))[:round(total * f) - sum(out)]:
         out[i] += 1
-    return [o / 10 for o in out]
+    return [o / f for o in out]
 
 
 def label(i):

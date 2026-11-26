@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, 
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from . import ai, brief, config, contest, db, judge, pdfimport
+from . import ai, brief, config, contest, db, judge, pdfimport, results
 from .api_student import check_dob, conn, departments, dob_password, new_participant_id
 from .security import (ADMIN_COOKIE, MODULES, attempt_login, audit, can_manage_comp, check_password_strength, client_ip, current_user,
                        has, hash_password, login, logout, need, need_comp, perms, temp_password, verify_password)
@@ -2518,6 +2518,16 @@ def fmt(t):
     return datetime.fromtimestamp(t, TZ).strftime("%Y-%m-%d %H:%M:%S") if t else ""
 
 
+@router.get("/reports/results.pdf")
+def results_pdf(competition_id: int, req: Request, u=Depends(admin), c=Depends(conn)):
+    """Printable results: summary, top 5 and the full ranking (score out of each student's paper total)."""
+    need(u, "reports")
+    comp = comp_or_404(c, competition_id, u)
+    audit(c, u, "report.export", detail={"kind": "results.pdf", "competition_id": competition_id}, ip=client_ip(req))
+    return Response(results.pdf(c, comp), media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{comp["code"]}-results.pdf"'})
+
+
 @router.get("/reports/{kind}.csv")
 def report(kind: str, req: Request, competition_id: int | None = None, semester_id: int | None = None, user_id: int | None = None,
            u=Depends(admin), c=Depends(conn)):
@@ -2550,6 +2560,10 @@ def report(kind: str, req: Request, competition_id: int | None = None, semester_
         rows = comp_participants(competition_id, u, c)
         return csv_resp(f"{code}-participants.csv", ["Participant ID", "Name", "USN", "Department", "Year", "Section", "Joined", "Source", "Status", "Submissions", "Accepted"],
                         [[r["participant_id"], r["name"], r["usn"], r["department"], r["year"], r["section"], fmt(r["joined_at"]), r["source"], r["status"], r["submissions"], r["accepted"]] for r in rows])
+    if kind == "results":
+        return csv_resp(f"{code}-results.csv", *results.summary_rows(results.collect(c, comp)))
+    if kind == "details":
+        return csv_resp(f"{code}-results-by-question.csv", *results.detail_rows(results.collect(c, comp)))
     if kind in ("scores", "rankings"):
         lb = contest.leaderboard(c, comp)
         return csv_resp(f"{code}-final-rankings.csv", ["Rank", "Participant ID", "Name", "Department", "Year", "Score", "Solved", "Penalty (min)"]

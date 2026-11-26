@@ -642,7 +642,7 @@ async function compIntegrity(T, c) {
 }
 
 async function compLeaderboard(T, c) {
-  $('#hdrActions').innerHTML = `<a class="btn" href="${A}/reports/scores.csv?competition_id=${c.id}">Export rankings CSV</a>${['live', 'paused', 'ended'].includes(c.status) ? '<button class="btn" id="rj">Re-judge errors</button>' : ''}`;
+  $('#hdrActions').innerHTML = `<a class="btn" href="${A}/reports/results.pdf?competition_id=${c.id}">Results PDF</a><a class="btn" href="${A}/reports/results.csv?competition_id=${c.id}">Results CSV</a>${['live', 'paused', 'ended'].includes(c.status) ? '<button class="btn" id="rj">Re-judge errors</button>' : ''}`;
   if ($('#rj')) $('#rj').onclick = async () => { const r = await POST(`${A}/competitions/${c.id}/rejudge?only_errors=true`).catch(fail); if (r) toast(`${r.queued} submission(s) re-queued`, 'ok'); };
   const load = async () => {
     const d = await GET(`${A}/competitions/${c.id}/leaderboard`).catch(() => null);
@@ -665,9 +665,12 @@ async function compLeaderboard(T, c) {
 
 function reportButtons(T, c) {
   $('#hdrActions').innerHTML = '';
-  const r = [['participants', 'Participant list', 'Everyone registered, with department, status and submission counts.'], ['scores', 'Final rankings & scores', 'Rank, score, solved and per-question marks. Suitable for college records.'],
+  const r = [['results', 'Results (one row per student)', 'Rank, score out of the paper total, %, attempted / solved, warnings, time used, status.'],
+    ['details', 'Results by question (all details)', 'One row per student per question on their paper: marks, scored, solved, attempts, last verdict.'],
+    ['participants', 'Participant list', 'Everyone registered, with department, status and submission counts.'], ['scores', 'Final rankings & scores', 'Rank, score, solved and per-question marks. Suitable for college records.'],
     ['questions', 'Question-wise performance', 'Attempts, solvers, average score and verdict breakdown per question.'], ['submissions', 'Submission statistics', 'Every submission with verdict, time, memory and IP.'], ['integrity', 'Fair-play report', 'Paste, tab-switch and IP signals per participant.']];
-  T.innerHTML = `<div class="grid g2">${r.map(([k, t, d]) => `<div class="card pad row between"><div><b>${t}</b><div class="small muted">${d}</div></div><a class="btn" href="${A}/reports/${k}.csv?competition_id=${c.id}">Download CSV</a></div>`).join('')}</div>`;
+  T.innerHTML = `<div class="card pad row between" style="margin-bottom:12px;background:var(--brand-soft, #f3f0ff)"><div><b>${ico('download', 15)} Results report (PDF)</b><div class="small muted">Summary, top 5 and the full ranking with each student's score out of their paper total. Ready to print or share.</div></div><a class="btn primary" href="${A}/reports/results.pdf?competition_id=${c.id}">Download PDF</a></div>
+    <div class="grid g2">${r.map(([k, t, d]) => `<div class="card pad row between"><div><b>${t}</b><div class="small muted">${d}</div></div><a class="btn" href="${A}/reports/${k}.csv?competition_id=${c.id}">Download CSV</a></div>`).join('')}</div>`;
 }
 
 // ================= questions =================
@@ -1286,7 +1289,7 @@ async function reports() {
     `<div class="grid g2" style="align-items:start"><section class="card pad stack"><h3 style="margin:0">Competition reports</h3>${sel('c', comps.map((c) => [c.id, `${c.code} · ${c.title}`]), '', 'id="rc"')}<div id="rb"></div></section>
     <section class="card pad stack"><h3 style="margin:0">Semester leaderboard</h3>${sems.length ? `${sel('s', sems.map((s) => [s.id, s.name]), '', 'id="rs"')}<a class="btn" id="rsb">Download semester CSV</a>` : '<p class="small muted">No semesters.</p>'}
       <div class="divider"></div><p class="small muted" style="margin:0">Individual student reports: open a student in <a href="#/participants">Participants</a> ${ico('right')} Export history CSV.</p></section></div>`;
-  const drawB = () => { const id = $('#rc').value; $('#rb').innerHTML = id ? [['participants', 'Participant list'], ['scores', 'Final rankings & scores'], ['questions', 'Question-wise performance'], ['submissions', 'Submission statistics'], ['integrity', 'Fair-play report']].map(([k, l]) => `<a class="btn block" style="margin-bottom:6px;justify-content:flex-start" href="${A}/reports/${k}.csv?competition_id=${id}">⬇ ${l}</a>`).join('') : empty('No competitions'); };
+  const drawB = () => { const id = $('#rc').value; $('#rb').innerHTML = id ? [['results', 'Results (one row per student)'], ['details', 'Results by question (all details)'], ['participants', 'Participant list'], ['scores', 'Final rankings & scores'], ['questions', 'Question-wise performance'], ['submissions', 'Submission statistics'], ['integrity', 'Fair-play report']].map(([k, l]) => `<a class="btn block" style="margin-bottom:6px;justify-content:flex-start" href="${A}/reports/${k}.csv?competition_id=${id}">⬇ ${l}</a>`).join('') + `<a class="btn primary block" style="justify-content:flex-start" href="${A}/reports/results.pdf?competition_id=${id}">⬇ Results report (PDF)</a>` : empty('No competitions'); };
   if ($('#rc')) { $('#rc').onchange = drawB; drawB(); }
   if ($('#rs')) { const upd = () => $('#rsb').href = `${A}/reports/semester.csv?semester_id=${$('#rs').value}`; $('#rs').onchange = upd; upd(); }
 }

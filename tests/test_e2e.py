@@ -846,6 +846,17 @@ def run():
     con.execute("UPDATE competition_participants SET started_at=? WHERE competition_id=?", (now - 45 * 60 - 2, cw["id"]))
     assert evA.get(f"{A}/competitions/{cw['id']}")["status"] == "ended"                     # nobody left with time: the round closes by itself
     con.close()
+    rp = evA.get(f"{A}/reports/results.pdf?competition_id={cw['id']}")
+    assert rp.headers["content-type"] == "application/pdf" and rp.content[:5] == b"%PDF-", rp.headers
+    import pymupdf
+    ptxt = "".join(pg.get_text() for pg in pymupdf.open("pdf", rp.content))
+    assert "Top 5" in ptxt and "Full results" in ptxt and "77.78" in ptxt and "Score (of 100)" in ptxt and "By department" in ptxt and "Score spread" in ptxt and "page 1 of" in ptxt, ptxt[:600]
+    open(TMP / "results.pdf", "wb").write(rp.content)
+    rc = evA.get(f"{A}/reports/results.csv?competition_id={cw['id']}").text.splitlines()
+    assert rc[0].startswith("Rank,Participant ID,Name") and any(",77.78,100,77.8,3,2,2," in l for l in rc[1:]), rc[:3]
+    dc = evA.get(f"{A}/reports/details.csv?competition_id={cw['id']}").text.splitlines()
+    assert sum(1 for l in dc if ",77.78,100," in l) == 3 and any(",Coding,55.56,55.56,yes,1,AC" in l for l in dc) and any(",Multiple choice,22.22,22.22,yes,1,AC" in l for l in dc), dc[:5]
+    ok("results export: PDF report (summary, top 5, full ranking, page numbers), results CSV (one row per student), details CSV (every question on each paper)")
     ok("own clock: each student gets the full duration from when they open the test (late starter keeps the round open), time up = submitted for them, then the round ends")
     ok("fixed 100 marks per student shared by rule-based weight (easy MCQ 10, easy coding 25 -> 22.2 / 22.2 / 55.6); score scaled to the student's own paper")
     qr = evA.post(f"{A}/competitions/quick", {"mcq": 2, "coding": 1, "minutes": 10})
