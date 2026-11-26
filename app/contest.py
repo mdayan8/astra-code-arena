@@ -250,7 +250,7 @@ def tick(c, comp):
         c.execute("UPDATE competitions SET status='live', started_at=COALESCE(started_at,?), updated_at=? WHERE id=? AND status='published'",
                   (t, t, comp["id"]))
         changed = True
-    elif comp["status"] == "live" and comp["start_at"] and t >= end_time(comp):
+    elif comp["status"] == "live" and comp["start_at"] and t >= end_time(comp) and t >= last_end(c, comp):
         c.execute("UPDATE competitions SET status='ended', ended_at=?, updated_at=? WHERE id=? AND status='live'", (t, t, comp["id"]))
         c.execute("INSERT INTO audit_logs(user_id,action,entity,entity_id,competition_id,detail,created_at) VALUES(NULL,'competition.auto_end','competition',?,?,NULL,?)",
                   (comp["id"], comp["id"], t))
@@ -267,6 +267,34 @@ def tick(c, comp):
 def get_comp(c, comp_id):
     comp = db.one(c, "SELECT * FROM competitions WHERE id=?", comp_id)
     return tick(c, comp) if comp else None
+
+
+def own_clock(c, cid):
+    """On (default): every student gets the full duration from the moment they open the test; they may start any time
+    until the scheduled end. Off: one clock for everyone."""
+    return db.setting(c, f"ownclock:{cid}", "1") == "1"
+
+
+def my_end(c, comp, uid):
+    """When this student's time is up."""
+    e = end_time(comp)
+    if not e or not own_clock(c, comp["id"]):
+        return e
+    r = db.one(c, "SELECT started_at FROM competition_participants WHERE competition_id=? AND user_id=?", comp["id"], uid)
+    if not r or not r["started_at"]:
+        return e
+    # ponytail: pauses count for everyone, also a student who started after the pause (gets that much extra)
+    return max(r["started_at"], comp["start_at"]) + (e - comp["start_at"])
+
+
+def last_end(c, comp):
+    """The round stays live until the last student who started still has time (never past scheduled end + duration)."""
+    e = end_time(comp)
+    if not e or not own_clock(c, comp["id"]):
+        return e
+    r = db.one(c, "SELECT MAX(p.started_at) AS s FROM competition_participants p WHERE p.competition_id=? AND p.started_at IS NOT NULL "
+                  "AND NOT EXISTS (SELECT 1 FROM participant_finish f WHERE f.competition_id=p.competition_id AND f.user_id=p.user_id)", comp["id"])
+    return max(e, max(r["s"], comp["start_at"]) + (e - comp["start_at"])) if r and r["s"] else e
 
 
 def remaining(comp):
@@ -294,7 +322,7 @@ def compute_leaderboard(c, comp):
     qs = db.all_(c, "SELECT cq.question_id, cq.marks, cq.ordinal, qv.title FROM competition_questions cq "
                     "JOIN question_versions qv ON qv.id=cq.version_id WHERE cq.competition_id=? ORDER BY cq.ordinal", comp["id"])
     marks = {q["question_id"]: q["marks"] for q in qs}
-    parts = db.all_(c, "SELECT cp.user_id, cp.status, u.name, u.avatar, s.participant_id, s.department, s.year FROM competition_participants cp "
+    parts = db.all_(c, "SELECT cp.user_id, cp.status, cp.started_at, u.name, u.avatar, s.participant_id, s.department, s.year FROM competition_participants cp "
                        "JOIN users u ON u.id=cp.user_id LEFT JOIN students s ON s.user_id=u.id WHERE cp.competition_id=?", comp["id"])
     fixed = fixed_total(c, comp["id"])
     mine = {r["user_id"]: db.jl(r["questions"]) for r in db.all_(c, "SELECT user_id, questions FROM competition_participants WHERE competition_id=? AND questions IS NOT NULL", comp["id"])}
@@ -305,6 +333,7 @@ def compute_leaderboard(c, comp):
     subs = db.all_(c, "SELECT id, user_id, question_id, verdict, score, created_at FROM submissions WHERE competition_id=? AND kind='submit' "
                       "AND status='done' AND verdict NOT IN ('IE','CE') ORDER BY created_at, id", comp["id"])
     start = comp["started_at"] or comp["start_at"] or 0
+    clock = own_clock(c, comp["id"])
     first_ac = {}
     for s in subs:
         if s["verdict"] == "AC" and s["question_id"] not in first_ac:
@@ -342,9 +371,10 @@ def compute_leaderboard(c, comp):
             if st["ac"]:
                 solved += 1
             if st["best_at"]:
-                mins = max(0, (st["best_at"] - start) // 60)
+                mine_start = max(p["started_at"] or start, start) if clock else start   # time taken counts from the student's own start
+                mins = max(0, (st["best_at"] - mine_start) // 60)
                 penalty += mins + st["wrong_before_best"] * cfg["penalty_minutes"]
-                last = max(last, st["best_at"])
+                last = max(last, start + st["best_at"] - mine_start)
             per[str(q["question_id"])] = {"score": round(sc, 2), "ac": st["ac"], "tries": st["tries"]}
         own_max = sum(marks[i] for i in own if i in marks) or 1
         if fixed:   # every paper is worth the same: scale this student's marks so their own questions add up to the fixed total

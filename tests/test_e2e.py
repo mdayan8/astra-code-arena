@@ -826,7 +826,27 @@ def run():
     assert wait_sub(s3, r["id"])["verdict"] == "AC"
     me = next(x for x in s3.get(f"{BASE}/api/competitions/{cw['id']}/leaderboard")["rows"] if x["me"])
     assert abs(me["score"] - 77.78) < 0.05, me["score"]                                    # (10 + 25) / 45 x 100
-    evA.post(f"{A}/competitions/{cw['id']}/action", {"action": "end"})
+    import sqlite3
+    con = sqlite3.connect(str(TMP / "astra.db"), timeout=30, isolation_level=None)
+    now = int(time.time())
+    assert con.execute("SELECT started_at FROM competition_participants WHERE competition_id=?", (cw["id"],)).fetchone()[0], "opening the test starts the student's clock"
+    con.execute("UPDATE competitions SET start_at=?, started_at=? WHERE id=?", (now - 45 * 60 - 60, now - 45 * 60 - 60, cw["id"]))   # scheduled end passed a minute ago
+    con.execute("UPDATE competition_participants SET started_at=? WHERE competition_id=?", (now - 600, cw["id"]))                  # but this student opened it 10 min ago
+    ar = s3.get(f"{BASE}/api/student/competitions/{cw['id']}/arena")
+    assert ar["competition"]["status"] == "live" and 34 * 60 < ar["competition"]["remaining_sec"] <= 35 * 60 and not ar["finished_at"], ar["competition"]["remaining_sec"]
+    other = con.execute("SELECT id FROM users WHERE id NOT IN (SELECT user_id FROM competition_participants WHERE competition_id=?) LIMIT 1", (cw["id"],)).fetchone()[0]
+    con.execute("INSERT INTO competition_participants(competition_id,user_id,joined_at,started_at,questions) VALUES(?,?,?,?,'[]')", (cw["id"], other, now, now - 60))  # still writing
+    con.execute("UPDATE competition_participants SET started_at=? WHERE competition_id=? AND user_id!=?", (now - 45 * 60 - 2, cw["id"], other))  # s3's 45 minutes are over
+    ar = s3.get(f"{BASE}/api/student/competitions/{cw['id']}/arena")
+    assert ar["competition"]["status"] == "live" and ar["finished_at"] and ar["competition"]["remaining_sec"] == 0, (ar["competition"]["status"], ar["finished_at"])
+    assert con.execute("SELECT COUNT(*) FROM activity_events WHERE competition_id=? AND type='auto_finished'", (cw["id"],)).fetchone()[0] == 1
+    time.sleep(5.1)
+    s3.post(f"{BASE}/api/student/submissions", {"competition_id": cw["id"], "question_id": sumq["id"], "language": "c", "kind": "submit", "code": "x"}, expect=409)
+    assert evA.get(f"{A}/competitions/{cw['id']}")["status"] == "live"                      # the other student still has time
+    con.execute("UPDATE competition_participants SET started_at=? WHERE competition_id=?", (now - 45 * 60 - 2, cw["id"]))
+    assert evA.get(f"{A}/competitions/{cw['id']}")["status"] == "ended"                     # nobody left with time: the round closes by itself
+    con.close()
+    ok("own clock: each student gets the full duration from when they open the test (late starter keeps the round open), time up = submitted for them, then the round ends")
     ok("fixed 100 marks per student shared by rule-based weight (easy MCQ 10, easy coding 25 -> 22.2 / 22.2 / 55.6); score scaled to the student's own paper")
     qr = evA.post(f"{A}/competitions/quick", {"mcq": 2, "coding": 1, "minutes": 10})
     qc = evA.get(f"{A}/competitions/{qr['id']}")

@@ -49,6 +49,9 @@ def public_comp(c, comp, me=None):
     d["remaining_sec"] = contest.remaining(comp) if comp["status"] in ("live", "paused") else None
     d["question_count"] = db.one(c, "SELECT COUNT(*) AS n FROM competition_questions WHERE competition_id=?", comp["id"])["n"]
     d["participant_count"] = db.one(c, "SELECT COUNT(*) AS n FROM competition_participants WHERE competition_id=?", comp["id"])["n"]
+    if me and comp["status"] in ("live", "paused"):   # this student's own time left
+        d["remaining_sec"] = max(0, contest.my_end(c, comp, me["id"]) - db.now()) if comp["start_at"] else d["remaining_sec"]
+        d["own_clock"] = contest.own_clock(c, comp["id"])
     if me:
         p = db.one(c, "SELECT status, joined_at FROM competition_participants WHERE competition_id=? AND user_id=?", comp["id"], me["id"])
         d["joined"] = bool(p)
@@ -485,6 +488,16 @@ def arena_access(c, comp_id, u):
 @router.get("/api/student/competitions/{comp_id}/arena")
 def arena(comp_id: int, u=Depends(student), c=Depends(conn)):
     comp, p = arena_access(c, comp_id, u)
+    if comp["status"] == "live" and not p.get("started_at") and contest.own_clock(c, comp_id):
+        if db.now() >= contest.end_time(comp):
+            raise HTTPException(409, "This round closed for new starts at its scheduled end time.")
+        c.execute("UPDATE competition_participants SET started_at=? WHERE competition_id=? AND user_id=? AND started_at IS NULL", (db.now(), comp_id, u["id"]))
+    if comp["status"] == "live" and contest.own_clock(c, comp_id) and db.now() >= contest.my_end(c, comp, u["id"]):
+        # this student's own time is up: their test is submitted for them (best marks so far count; saved code can be graded by the organisers)
+        if c.execute("INSERT OR IGNORE INTO participant_finish(competition_id,user_id,finished_at) VALUES(?,?,?)",
+                     (comp_id, u["id"], contest.my_end(c, comp, u["id"]))).rowcount:
+            c.execute("INSERT INTO activity_events(competition_id,user_id,type,detail,ip,created_at) VALUES(?,?,'auto_finished',?,NULL,?)",
+                      (comp_id, u["id"], json.dumps({"reason": "time up"}), db.now()))
     byid = {q["question_id"]: q for q in db.all_(c, "SELECT cq.question_id, cq.marks, cq.ordinal, qv.* FROM competition_questions cq JOIN question_versions qv ON qv.id=cq.version_id "
                                                  "WHERE cq.competition_id=?", comp_id)}
     qs = [byid[i] for i in contest.assigned(c, comp, u["id"]) if i in byid]
@@ -622,8 +635,8 @@ def submit(body: SubmitIn, req: Request, u=Depends(student), c=Depends(conn)):
             raise HTTPException(403, "You have been disqualified from this competition.")
         if comp["status"] == "paused":
             raise HTTPException(409, "The competition is paused. Please wait for the organisers to resume it.")
-        if comp["status"] != "live" or t >= contest.end_time(comp):
-            raise HTTPException(409, "The competition is not accepting submissions right now.")
+        if comp["status"] != "live" or t >= contest.my_end(c, comp, u["id"]):
+            raise HTTPException(409, "Your time is up: submissions are closed." if comp["status"] == "live" else "The competition is not accepting submissions right now.")
         if body.kind == "submit" and db.one(c, "SELECT 1 AS x FROM participant_finish WHERE competition_id=? AND user_id=?", comp["id"], u["id"]):
             raise HTTPException(409, "You have already finished this test. Your answers are final.")
         cq = db.one(c, "SELECT * FROM competition_questions WHERE competition_id=? AND question_id=?", comp["id"], body.question_id)

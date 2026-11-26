@@ -337,6 +337,14 @@ MIGRATIONS: list[str] = [
        ALTER TABLE competitions ADD COLUMN results_at INTEGER;
        CREATE INDEX IF NOT EXISTS ix_act_type ON activity_events(competition_id, type, user_id, created_at);
        ALTER TABLE competition_participants ADD COLUMN questions TEXT;""",
+    # 10: each student's own clock: when they opened the test
+    """ALTER TABLE competition_participants ADD COLUMN started_at INTEGER;
+       -- a round already running: students who already opened it keep the time they really started (first heartbeat after the start)
+       UPDATE competition_participants SET started_at = (
+         SELECT MAX(co.start_at, COALESCE((SELECT MIN(a.created_at) FROM activity_events a WHERE a.competition_id=competition_participants.competition_id
+                AND a.user_id=competition_participants.user_id AND a.type!='joined' AND a.created_at>=co.start_at), co.start_at))
+         FROM competitions co WHERE co.id=competition_participants.competition_id)
+       WHERE questions IS NOT NULL AND competition_id IN (SELECT id FROM competitions WHERE status IN ('live','paused') AND start_at IS NOT NULL);""",
 ]
 
 

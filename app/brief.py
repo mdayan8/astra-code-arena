@@ -50,8 +50,10 @@ def write(c, cid):
     desc = (f"**{comp['title']}** is a {comp['duration_min']}-minute {lv + ' ' if lv else ''}coding round{nq}{mx}, worth {_n(f['total'])} marks. "
             + ("Every student gets their own set of questions of the same kind and level, so the paper is fair for all. " if own else "")
             + f"Starts {when}.")
-    r = ["## Before you start", f"- Starts **{when}**, lasts **{comp['duration_min']} minutes**. The timer runs from the start of the round" +
-         (", so joining late leaves you less time." if comp["allow_late_join"] else "; late joining is not allowed."),
+    clock = contest.own_clock(c, cid)
+    r = ["## Before you start", f"- Starts **{when}**, lasts **{comp['duration_min']} minutes**. " + (
+         "Your own timer starts when you open the test, so you always get the full time; open it before the scheduled end. When your time is up the test is submitted for you."
+         if clock else "The timer runs from the start of the round" + (", so joining late leaves you less time." if comp["allow_late_join"] else "; late joining is not allowed.")),
          "- Use a laptop or desktop with a charged battery. Keep your participant ID and password ready.",
          "", "## Your paper"]
     if f["per"]:
