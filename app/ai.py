@@ -2,6 +2,7 @@
 Keys live only in server env. Everything the model returns becomes a *draft*; expected outputs are always
 recomputed by running the reference solution in the sandbox, never trusted from the model."""
 import json
+import random
 import re
 import time
 import urllib.error
@@ -183,6 +184,12 @@ def looks_like_code(lang: str, code: str) -> bool:
     return len(c.strip()) > 10
 
 
+def real_input(x):
+    """Drops placeholder tests like '2 4 6 ... (1000 even numbers)': a program can only read real values."""
+    t = str(x)
+    return bool(t.strip()) and not re.search(r"\.\.\.|…|\(\s*\d+\s+\w+.*\)|\b(?:etc|repeated|times|numbers|elements|values)\b", t, re.I)
+
+
 def normalize_question(d: dict) -> tuple[dict, list]:
     warn = []
     q = {k: str(d.get(k) or "") for k in ("title", "statement", "input_format", "output_format", "constraints")}
@@ -194,7 +201,7 @@ def normalize_question(d: dict) -> tuple[dict, list]:
     ref = d.get("reference") or {}
     q["reference"] = {k: fix_code(k, str(v)) for k, v in ref.items() if k in ("c", "python", "cpp", "java") and v and looks_like_code(k, str(v))}
     q["tests"] = [{"input": _nl(t.get("input")), "kind": t.get("kind") if t.get("kind") in ("normal", "boundary", "edge", "stress") else "normal",
-                   "description": str(t.get("description") or "")} for t in (d.get("tests") or []) if isinstance(t, dict) and t.get("input") is not None]
+                   "description": str(t.get("description") or "")} for t in (d.get("tests") or []) if isinstance(t, dict) and t.get("input") is not None and real_input(t.get("input"))]
     for k in ("title", "statement", "input_format", "output_format"):
         if not q[k].strip():
             warn.append(f"AI left the {k.replace('_', ' ')} empty.")
@@ -211,6 +218,98 @@ def _nl(s):
     return s if s.endswith("\n") or not s else s + "\n"
 
 
+def ref_block(p):
+    """The organiser's reference document (notes, a syllabus, an old question paper): questions follow its topics and style."""
+    ref = (p.get("reference") or "").strip()
+    if not ref:
+        return ""
+    return ("\nReference material from the organiser (base the questions on the topics, concepts and style in it; if it contains questions, "
+            "write NEW questions of the same kind and level instead of copying them):\n<<<\n" + ref[:4000] + "\n>>>")
+
+
+def chunk(text, i, size=3500):
+    """Different part of a long reference for each question, so a set covers the whole document."""
+    text = (text or "").strip()
+    if len(text) <= size:
+        return text
+    parts = [text[k:k + size] for k in range(0, len(text), size)]
+    return parts[i % len(parts)]
+
+
+MUTATIONS = [(r"<=", "<"), (r"(?<![<>=!])<(?![<=])", "<="), (r">=", ">"), (r"(?<![<>=!-])>(?![>=])", ">="), (r"==", "!="),
+             (r"\+\+", "--"), (r"\+ *1\b", "+ 2"), (r"- *1\b", ""), (r"\b0\b", "1"), (r"\+=", "-="), (r"&&", "||"), (r"%", "/"), (r"= *1\b(?!\.)", "= 0"),
+             (r"(?<![+])\+(?![+=])", "-"), (r"(?<![-])-(?![-=>])", "+"), (r"(?<![*/])\*(?![=/])", "+"), (r"\[\s*i\s*\]", "[i + 1]"),
+             (r"(?<![<>=!-])>(?![>=])", "<"), (r"(?<![<>=!])<(?![<=])", ">"), (r"!=", "==")]
+
+
+def mutants(code):
+    """Small one-place bugs a student can find by reading carefully (programmatic, so they always exist)."""
+    lines = code.split("\n")
+    out = []
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if not s or s.startswith(("#", "//", "/*", "*")):
+            continue
+        quoted = [m.span() for m in re.finditer(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'', line)]   # never inside "..." or '.'
+        for rx, rep in MUTATIONS:
+            for m in re.finditer(rx, line):
+                if any(a <= m.start() < b for a, b in quoted) or re.search(r"return\s*$", line[:m.start()]):
+                    continue   # inside a string, or the exit code (that would only crash, not teach)
+                new = line[:m.start()] + rep + line[m.end():]
+                if new != line:
+                    out.append("\n".join(lines[:i] + [new] + lines[i + 1:]))
+    return out
+
+
+def judge_all(c, qid, vid, user_id, code, lang="c", timeout=120):
+    """Runs code against every test of the question (admin run). -> verdict or None."""
+    sid = c.execute("INSERT INTO submissions(competition_id,user_id,question_id,version_id,kind,language,code,created_at) VALUES(NULL,?,?,?,'run',?,?,?)",
+                    (user_id, qid, vid, lang, code, db.now())).lastrowid
+    t = time.time()
+    try:
+        while time.time() - t < timeout:
+            r = db.one(c, "SELECT status, verdict FROM submissions WHERE id=?", sid)
+            if r and r["status"] == "done":
+                return r["verdict"]
+            time.sleep(1)
+        return None
+    finally:
+        c.execute("DELETE FROM submissions WHERE id=?", (sid,))
+
+
+def make_debug(c, qid, user_id, log):
+    """Turns a checked coding problem into 'Fix the bug': the editor starts with the reference C program carrying one small bug.
+    The bug is accepted only if the buggy program compiles and the server sees it fail at least one test."""
+    from .api_admin import editable_version
+    v = db.one(c, "SELECT q.latest_version_id AS vid, r.code FROM questions q JOIN reference_solutions r ON r.version_id=q.latest_version_id AND r.language='c' WHERE q.id=?", qid)
+    if not v:
+        log.append("Fix the bug: there is no C solution to put a bug into, so it stays a normal coding problem.")
+        return False
+    ref = v["code"]
+    cands = []
+    try:   # first ask the model for a natural-looking bug, then fall back to small automatic changes
+        d = chat(f"""Here is a correct C program:\n{ref}\nIntroduce exactly ONE small logical bug (for example a wrong loop bound, a wrong comparison or a wrong initial value) that a student can find by reading the code.
+The program must still compile. Do not add comments that reveal the bug. Return JSON: {{"code": str}}""")
+        b = fix_code("c", str(d.get("code") or ""))
+        if looks_like_code("c", b) and b.strip() != ref.strip():
+            cands.append(b)
+    except Exception:
+        pass
+    muts = mutants(ref)
+    random.shuffle(muts)
+    cands += muts[:12]
+    for b in cands:
+        verdict = judge_all(c, qid, v["vid"], user_id, b)
+        if verdict in ("WA", "RE"):
+            with db.tx(c):
+                vid, _ = editable_version(c, qid, {"id": user_id})
+                c.execute("UPDATE question_versions SET qtype='debug', starter=?, languages=? WHERE id=?", (json.dumps({"c": b}), json.dumps(["c"]), vid))
+            log.append(f"Fix the bug: the starter program has one bug; the server checked that it compiles and fails a test ({verdict}).")
+            return True
+    log.append("Fix the bug: no bug could be checked automatically, so it stays a normal coding problem.")
+    return False
+
+
 LEVEL_GUIDE = {
     "Easy": "Easy = a first-year student solves it in 10-15 minutes with one loop or a few conditions (for example: count, sum, reverse, maximum, check even). No advanced algorithms.",
     "Intermediate": "Moderate = needs two ideas together, such as nested loops, sorting then scanning, a frequency count or a running sum. Solvable in 20-30 minutes.",
@@ -221,12 +320,12 @@ LEVEL_GUIDE = {
 def generate_question(p: dict) -> dict:
     prompt = f"""Create one ORIGINAL programming problem.
 Topic: {p.get('topic')}
-Difficulty: {p.get('difficulty')}. {LEVEL_GUIDE.get(p.get('difficulty') or 'Easy', '')} Respect the difficulty strictly.
+Difficulty: {p.get('difficulty')}. {LEVEL_GUIDE.get(p.get('difficulty') or 'Easy', '')} Respect the difficulty strictly.{ref_block(p)}
 Target language for reference solution: {p.get('language') or 'C and Python'}
 Style: {p.get('style') or 'short real-world story, clear and unambiguous'}
 Constraints guidance: {p.get('constraints') or ('n up to 1000, values fit in int' if (p.get('difficulty') or 'Easy') == 'Easy' else 'small enough for O(n log n)')}
-Number of sample cases: {p.get('samples') or 2}
-Also give 8-12 hidden test inputs covering normal, boundary (minimum and maximum), edge and duplicate-value cases.
+Number of sample cases: {p.get('samples') or (3 if p.get('tests') is False else 2)}
+{'Also give 8-12 hidden test inputs covering normal, boundary (minimum and maximum), edge and duplicate-value cases.' if p.get('tests') is not False else 'The organiser wants SIMPLE input/output only: give the sample cases (each a small, realistic input with its output) and leave "tests" empty.'}
 Rules for reference solutions (they are executed automatically and must agree with each other):
 - Each one is a COMPLETE program: it reads the whole input from standard input exactly as the input format says and prints only the answer to standard output.
 - The Python one must be a full script that reads input (e.g. sys.stdin) and prints; never just a function.
@@ -268,7 +367,7 @@ def generate_mcq(p: dict) -> list:
                '"check": "s=[2,6,12,20,30]\\nprint(s[-1]+(s[-1]-s[-2])+2)", "explanation": "Differences grow by 2: 4, 6, 8, 10, 12."}')
     prompt = f"""Write {n} multiple-choice questions for engineering students preparing for campus placement tests.
 Topic: {p.get('topic')}
-Difficulty: {p.get('difficulty') or 'Easy'}. Short to read, but the student must think. All {n} questions must be different from each other.
+Difficulty: {p.get('difficulty') or 'Easy'}. Short to read, but the student must think. All {n} questions must be different from each other.{ref_block(p)}
 {'Each question shows one short, complete C program in "code" (with #include <stdio.h> and int main, no input, no undefined behaviour) and asks what it prints. The options are possible outputs.' if output else 'Each is a short concept, logic or aptitude question. If the answer can be calculated, put in "check" a tiny Python 3 program that prints the correct answer exactly as it is written in the options; otherwise leave "check" empty.'}
 Rules: exactly 4 options, exactly one correct, all different, plain text without letters like "A)" in front, no "all of the above". "answer" is the position 0-3 of the correct option.
 Example of the FORMAT only (do not reuse its content or numbers; every question must be new and different from the others):
@@ -302,7 +401,8 @@ Return JSON: {{"questions": [ ...{n} items like the example... ]}}"""
         title = str(q.get("title") or "").strip()
         if not title or len(title) > 60 or title.lower().startswith(("what", "which", "find", "question")):
             title = f"{str(p.get('topic') or 'Quiz').split(':')[0].strip().title()[:40]} #{len(out) + 1}"
-        out.append({"title": title[:120], "question": str(q["question"]).strip(), "code": code, "options": opts[:4], "answer": marked,
+        qtext = re.sub(r"\s*\(?options?\s*:\s*\[.*?\]\)?\s*$", "", str(q["question"]).strip(), flags=re.I | re.S)   # options shown separately
+        out.append({"title": title[:120], "question": qtext or str(q["question"]).strip(), "code": code, "options": opts[:4], "answer": marked,
                     "check": str(q.get("check") or "").strip()[:3000], "explanation": str(q.get("explanation") or "")[:1500]})
     return out[:n]
 
@@ -370,7 +470,8 @@ def run_mcq(draft_id: int, params: dict, user_id: int):
             if prog and real is not None and real.strip():
                 match = next((o for o in q["options"] if norm(o) == norm(real)), None)
                 if match and norm(match) == norm(q["answer"]):
-                    log.append("Answer proved: the server ran the " + ("program" if q["code"] else "calculation") + " and it prints the marked option.")
+                    log.append("Answer proved: the server ran the program and it prints the marked option." if q["code"] else
+                               "Answer checked: a calculation the AI wrote agrees with the marked option. Read it once before approving.")
                 elif match or q["code"]:
                     # a program's output is the truth; a calculation is trusted only when it lands exactly on one of the options
                     opts = q["options"] if match else [real.strip()[:300] if o == q["answer"] else o for o in q["options"]]
@@ -379,7 +480,8 @@ def run_mcq(draft_id: int, params: dict, user_id: int):
                     with db.tx(c):
                         c.execute("UPDATE question_versions SET options=? WHERE id=?", (json.dumps(list(dict.fromkeys(opts))[:4]), vid))
                         set_answer(c, vid, match or real.strip()[:300])
-                    log.append("The model marked a wrong answer. Corrected to what the " + ("program really prints" if q["code"] else "calculation gives") + " when the server runs it.")
+                    log.append("The model marked a wrong answer. Corrected to what the program really prints when the server runs it." if q["code"] else
+                               "The marked answer was changed to what the AI's own calculation gives. Check it before approving.")
                 else:
                     log.append("The model's calculation does not match any option, so the answer is unproved. Check it before approving.")
             elif prog:
@@ -417,7 +519,7 @@ Every input must be valid according to the input format and constraints. Do NOT 
 Return JSON: {{"tests": [{{"input": str, "kind": "normal"|"boundary"|"edge"|"stress", "description": str}}]}}"""
     d = chat(prompt)
     return [{"input": _nl(t.get("input")), "kind": t.get("kind") if t.get("kind") in ("normal", "boundary", "edge", "stress") else "normal",
-             "description": str(t.get("description") or "")[:200]} for t in (d.get("tests") or []) if isinstance(t, dict) and t.get("input") is not None][:count]
+             "description": str(t.get("description") or "")[:200]} for t in (d.get("tests") or []) if isinstance(t, dict) and t.get("input") is not None and real_input(t.get("input"))][:count]
 
 
 def variation(q: dict) -> dict:
@@ -454,7 +556,11 @@ print only the answer, and produce identical output for every valid input. Keep 
 Return ONLY the corrected programs (real code, not explanations) as JSON: {{"reference": {{"c": str, "python": str}}}}
 Inside JSON strings write newlines in the code as \\n and a C newline escape as \\\\n."""
     d = chat(prompt)
-    ref = d.get("reference") or {}
+    ref = d.get("reference") or {k: d[k] for k in ("c", "python") if k in d}   # small models also answer {"c": ...} or a bare string
+    if isinstance(ref, str):
+        ref = {("python" if looks_like_code("python", ref) and "#include" not in ref else "c"): ref}
+    if not isinstance(ref, dict):
+        return {}
     return {k: fix_code(k, str(v)) for k, v in ref.items() if k in ("c", "python") and v and looks_like_code(k, str(v))}
 
 
@@ -579,10 +685,21 @@ def run_draft(draft_id: int, kind: str, params: dict, user_id: int = None):
         log += [w for w in warn if not w.startswith("AI draft")]
         if not q["title"].strip() or not q["statement"].strip():
             raise RuntimeError("The model returned an empty problem. Try again or use a larger model.")
+        simple = params.get("tests") is False   # organiser asked for simple input/output only: the examples are also what is judged
+        if simple:
+            q["tests"] = []
+        elif len([t for t in q["tests"] if t["input"].strip()]) < 3:   # small models often skip hidden tests; without them the question cannot be approved
+            try:
+                q["tests"] += suggest_tests({**q, "sample_input": q["samples"][0]["input"] if q["samples"] else ""}, ["normal", "boundary", "edge"], 6)
+                log.append(f"The model gave too few hidden tests; asked for more ({len(q['tests'])} now).")
+            except Exception as e:
+                log.append(f"Could not get extra hidden tests: {str(e)[:80]}")
         claimed = [s["output"] for s in q["samples"]]
         user = {"id": user_id}
         tests = [TestIn(input=s["input"], expected="", visibility="sample", explanation=s["explanation"][:5000], description="AI sample") for s in q["samples"] if s["input"].strip()]
         tests += [TestIn(input=t["input"], expected="", visibility="hidden", kind=t["kind"], description=("AI: " + t["description"])[:500]) for t in q["tests"] if t["input"].strip()]
+        if simple:   # judged on the same examples the student sees
+            tests += [TestIn(input=s["input"], expected="", visibility="hidden", description="Same as the example") for s in q["samples"] if s["input"].strip()]
         if not tests:
             raise RuntimeError("The model produced no test inputs.")
         with db.tx(c):
@@ -637,6 +754,8 @@ def run_draft(draft_id: int, kind: str, params: dict, user_id: int = None):
                     c.execute("INSERT INTO reference_solutions(version_id,language,code) VALUES(?,?,?) ON CONFLICT(version_id,language) DO UPDATE SET code=excluded.code", (vid2, lang, code))
                 c.execute("UPDATE test_cases SET expected='', validated=0 WHERE version_id=?", (vid2,))  # recompute from the fixed reference
                 invalidate(c, vid2)
+        if params.get("debug") and any(l.startswith("Sandbox check passed") for l in log):
+            make_debug(c, qid, user_id, log)
         st = "pending"
         if params.get("auto_publish"):   # practice auto-grow: published only when both reference solutions agree on every test
             ok = any(l.startswith("Sandbox check passed") for l in log) and db.one(c, "SELECT validated_at AS v FROM question_versions qv JOIN questions q ON q.latest_version_id=qv.id WHERE q.id=?", qid)["v"]

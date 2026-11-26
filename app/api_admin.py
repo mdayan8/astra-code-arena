@@ -12,6 +12,7 @@ from pathlib import Path
 from difflib import SequenceMatcher
 from zoneinfo import ZoneInfo
 
+from starlette.concurrency import run_in_threadpool
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -346,6 +347,7 @@ def comp_full(c, comp):
     d["participant_count"] = db.one(c, "SELECT COUNT(*) AS n FROM competition_participants WHERE competition_id=?", comp["id"])["n"]
     from . import pool
     d["pool"] = pool.info(c, comp["id"])
+    d["explain"] = db.setting(c, f"explain:{comp['id']}", "1") == "1"
     d["submission_count"] = db.one(c, "SELECT COUNT(*) AS n FROM submissions WHERE competition_id=? AND kind='submit'", comp["id"])["n"]
     d["admins"] = db.all_(c, "SELECT u.id, u.name, u.username FROM competition_admins ca JOIN users u ON u.id=ca.user_id WHERE ca.competition_id=?", comp["id"])
     d["announcements"] = db.all_(c, "SELECT * FROM announcements WHERE competition_id=? ORDER BY id DESC", comp["id"])
@@ -399,6 +401,8 @@ class AssistIn(BaseModel):
     plan: dict = {}
     create: bool = False
     fill: bool = False
+    ref: str = Field(default="", max_length=32)
+    tests: bool | None = None
 
 
 @router.post("/assistant/competition")
@@ -415,9 +419,14 @@ def assistant_competition(body: AssistIn, req: Request, u=Depends(admin), c=Depe
         chosen = [keep[i] for i in random_state if i in keep] or chosen
     out = assistant.describe(plan, chosen, short)
     out["missing"] = missing if ai.enabled() and "ai" in u.get("modules", ["ai"]) else []
+    if any(m.get("type") in (None, "standard", "debug") for m in out["missing"]) and "tests" not in plan:
+        out["ask"] = [{"q": "If the AI writes the missing coding questions, how should answers be checked?",
+                       "chips": ["with hidden test cases", "simple input output only"]}] + (out.get("ask") or [])[:1]
     if body.fill and out["missing"]:   # "Write the missing ones with AI": drafts appear in AI Studio for approval
         from . import pool
-        started = {m.get("type"): pool.spawn(c, u["id"], m) for m in out["missing"]}
+        ref = ref_text(body.ref)
+        tests = body.tests if body.tests is not None else plan.get("tests")
+        started = {m.get("type"): pool.spawn(c, u["id"], {**m, "tests": tests}, ref) for m in out["missing"]}
         audit(c, u, "assistant.fill", detail={"started": sum(started.values())}, ip=client_ip(req))
         out["filling"] = {"started": sum(started.values()), "skipped": [assistant.TYPE_NAME[k] for k, v in started.items() if not v]}
     plan["picked"] = [q["id"] for q in chosen]
@@ -989,6 +998,19 @@ def grade_saved(cid: int, req: Request, u=Depends(admin), c=Depends(conn)):
     return {"queued": queued, "message": f"{queued} saved answer(s) sent to the judge. Scores update in a minute." if queued else "Nothing new to grade: every saved answer was already submitted."}
 
 
+class ExplainIn(BaseModel):
+    on: bool
+
+
+@router.post("/competitions/{cid}/explain")
+def set_explain(cid: int, body: ExplainIn, req: Request, u=Depends(admin), c=Depends(conn)):
+    """Whether students see how ranks were decided (the rules in order and a reason on each row)."""
+    comp_or_404(c, cid, u)
+    db.set_setting(c, f"explain:{cid}", "1" if body.on else "0")
+    audit(c, u, "competition.explain", "competition", cid, cid, {"on": body.on}, client_ip(req))
+    return {"on": body.on}
+
+
 @router.get("/practice")
 def practice_admin(u=Depends(admin), c=Depends(conn)):
     need(u, "questions")
@@ -1316,8 +1338,8 @@ def q_status(qid: int, body: QStatusIn, req: Request, u=Depends(admin), c=Depend
         missing = [k for k in (("statement",) if v.get("qtype") in judge.ANSWER_QTYPES else ("statement", "input_format", "output_format")) if not v[k].strip()]
         if missing:
             raise HTTPException(400, f"Fill in: {', '.join(missing)} before approving.")
-        if not any(t["visibility"] == "hidden" for t in q["tests"]):
-            raise HTTPException(400, "Add at least one hidden test case before approving.")
+        if not q["tests"]:
+            raise HTTPException(400, "Add at least one test case (an example counts) before approving.")
         if not v["validated_at"]:
             raise HTTPException(400, "Run reference-solution validation successfully before approving.")
     c.execute("UPDATE questions SET status=?, approved_by=?, updated_at=? WHERE id=?",
@@ -1695,8 +1717,65 @@ def ai_settings(body: AISetIn, req: Request, u=Depends(admin), c=Depends(conn)):
     return {**ai.status(), "autogrow": db.setting(c, "practice_autogrow", "true") == "true"}
 
 
+REF_DIR = config.DATA_DIR / "ai-refs"
+
+
+@router.post("/ai/reference")
+async def ai_reference(req: Request, file: UploadFile = File(...), u=Depends(admin), c=Depends(conn)):
+    """Reference document for AI generation (notes, syllabus, an old question paper): PDF, Word, PowerPoint, text, images...
+    The text is extracted once and kept privately; prompts then use it as their source."""
+    need(u, "ai")
+    data = await file.read(config.MAX_UPLOAD_MB * 1024 * 1024 + 1)
+    try:
+        kind = pdfimport.validate_upload(data, file.filename or "")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if kind in ("zip", "xlsx"):
+        raise HTTPException(400, "Attach a single document (PDF, Word, PowerPoint, text or an image), not a ZIP or a spreadsheet.")
+    REF_DIR.mkdir(parents=True, exist_ok=True)
+    tok = secrets.token_hex(8)
+    src = REF_DIR / f"{tok}{Path(file.filename or 'x.txt').suffix.lower()}"
+    src.write_bytes(data)
+    try:
+        pages, warnings, n = await run_in_threadpool(pdfimport.extract_any, src, kind)
+    except Exception as e:
+        raise HTTPException(400, f"Could not read that document: {str(e)[:200]}")
+    finally:
+        src.unlink(missing_ok=True)
+    text = re.sub(r"[ \t]+", " ", re.sub(r"\n{3,}", "\n\n", "\n".join(pages))).strip()
+    if len(text) < 30:
+        raise HTTPException(400, "No readable text was found in that document. " + " ".join(warnings[:2]))
+    (REF_DIR / f"{tok}.txt").write_text(text[:200_000])
+    audit(c, u, "ai.reference", detail={"file": (file.filename or "")[:120], "chars": len(text)}, ip=client_ip(req))
+    return {"ref": tok, "name": (file.filename or "document")[:120], "chars": len(text), "pages": n, "preview": text[:400], "warnings": warnings[:3]}
+
+
+def ref_text(tok):
+    if not tok:
+        return ""
+    if not re.fullmatch(r"[0-9a-f]{16}", tok):
+        raise HTTPException(400, "Unknown reference document.")
+    f = REF_DIR / f"{tok}.txt"
+    if not f.exists():
+        raise HTTPException(400, "The reference document is no longer available. Attach it again.")
+    return f.read_text()
+
+
 class AIPromptIn(BaseModel):
     text: str = Field(min_length=3, max_length=1000)
+    ref: str = Field(default="", max_length=32)        # from /ai/reference
+    level: str = Field(default="", pattern="^(|Easy|Intermediate|Challenging)$")   # applied to every part that names no level
+    tests: bool | None = None   # coding questions: hidden test cases (True) or simple input/output examples only (False); None = ask
+
+
+def tests_intent(text):
+    """What the organiser said about test cases, if anything: True, False or None (not said)."""
+    t = text.lower()
+    if re.search(r"\b(?:no|without|skip)\s+(?:hidden\s+)?test ?cases?|simple (?:input|i/?o|examples?)|just (?:the )?(?:examples?|samples?|input)|only (?:examples?|samples?)", t):
+        return False
+    if re.search(r"(?:with|add|include|hidden|write|generate)\s+(?:hidden\s+)?test ?cases?|test ?cases? (?:too|also|included)|auto[- ]?(?:check|judge|grade)", t):
+        return True
+    return None
 
 
 @router.post("/ai/prompt")
@@ -1710,8 +1789,17 @@ def ai_prompt(body: AIPromptIn, req: Request, u=Depends(admin), c=Depends(conn))
         typ = next((k for k, rx in assistant.TYPES if re.search(rx, body.text.lower())), "mcq")
         diff = next((k for k, rx in assistant.DIFFS if re.search(rx, body.text.lower())), None)
         specs = [{"count": 5 if typ in ("mcq", "output", "trace") else 1, "type": typ, "difficulty": diff, "topic": body.text[:80]}]
-    plan = [{**m, "started": pool.spawn(c, u["id"], m)} for m in specs]
-    audit(c, u, "ai.prompt", detail={"text": body.text[:300], "plan": plan}, ip=client_ip(req))
+    ref = ref_text(body.ref)
+    # "8 questions from the notes" names no kind: with a document that means a quiz on it
+    specs = [{**m, "difficulty": m.get("difficulty") or body.level or None, "type": m.get("type") or ("mcq" if ref else None)} for m in specs]
+    tests = body.tests if body.tests is not None else tests_intent(body.text)
+    if tests is None and any(m["type"] in (None, "standard", "debug") for m in specs):   # coding asked, test cases not mentioned: ask first
+        return {"ask": {"q": "For the coding questions, how should answers be checked?",
+                        "options": [{"label": "With hidden test cases (auto-checked, edge cases too)", "tests": True},
+                                    {"label": "Simple input/output only (judged on the examples students see)", "tests": False}]}, "plan": []}
+    specs = [{**m, "tests": tests} for m in specs]
+    plan = [{**m, "started": pool.spawn(c, u["id"], m, ref)} for m in specs]
+    audit(c, u, "ai.prompt", detail={"text": body.text[:300], "plan": plan, "reference": bool(ref)}, ip=client_ip(req))
     return {"plan": [{"count": m["count"], "type": assistant.TYPE_NAME.get(m["type"]) or "coding", "difficulty": m["difficulty"] or "Easy",
                       "topic": m["topic"], "started": m["started"]} for m in plan]}
 

@@ -134,6 +134,10 @@ def parse(text, plan=None, departments=(), now=None):
         p["unique"] = True
     elif re.search(r"same questions? for (?:everyone|all)|everyone (?:gets|sees) the same|no,? same", t):
         p["unique"] = False
+    if re.search(r"\b(?:no|without|skip)\s+(?:hidden\s+)?test ?cases?|simple (?:input|i/?o|examples?)|just (?:the )?(?:examples?|samples?)", t):
+        p["tests"] = False
+    elif re.search(r"(?:with|add|include|hidden)\s+(?:hidden\s+)?test ?cases?|auto[- ]?(?:check|judge|grade)", t):
+        p["tests"] = True
     lvl = next((k for k, rx in DIFFS if re.search(rf"(?:^|\s)(?:{rx})(?: level)?(?:\s|$)", t)), None)
     qs = _questions(t)
     if lvl and not qs and len(t.split()) <= 6:   # a short answer like "moderate": the level for every question asked so far
@@ -287,6 +291,7 @@ if __name__ == "__main__":  # self-check
     p4 = parse("hard", {"questions": [{"count": 2, "type": "mcq", "difficulty": None, "topic": ""}]}, [], now)
     assert p4["questions"][0]["difficulty"] == "Challenging" and p4["level"] == "Challenging", p4
     assert parse("no, same questions for everyone", {"unique": True}, [], now)["unique"] is False
+    assert parse("simple input output only", {}, [], now)["tests"] is False and parse("with hidden test cases", {}, [], now)["tests"] is True
     assert parse("5 logical thinking questions", {}, [], now)["questions"] == [{"count": 5, "type": "mcq", "difficulty": None, "topic": "logical"}]
     assert parse("10 moderate mcq on pointers and 2 high coding", {}, [], now)["questions"] == [
         {"count": 10, "type": "mcq", "difficulty": "Intermediate", "topic": "pointers"}, {"count": 2, "type": "standard", "difficulty": "Challenging", "topic": ""}]

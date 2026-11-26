@@ -16,14 +16,35 @@ const ICON = {
 const MOD = { dashboard: 'Dashboard', competitions: 'Competitions', questions: 'Question Bank', practice: 'Practice', pdf: 'Question Import', ai: 'AI Studio', tests: 'Test Cases', participants: 'Participants',
   submissions: 'Submissions', leaderboards: 'Leaderboards', semesters: 'Semesters', reports: 'Reports', admins: 'Admin Users', audit: 'Audit Logs', database: 'Database', settings: 'System Settings' };
 // ---------- competition assistant (chat) ----------
+// Reference document for AI writing (PDF, Word, PowerPoint, text, image). Returns a small UI bound to `holder.ref`.
+function refPicker(holder) {
+  const id = 'rf' + Math.random().toString(36).slice(2, 8);
+  const html = `<label class="btn sm refbtn" for="${id}" title="PDF, Word, PowerPoint, text or an image of notes or an old question paper">${ico('upload', 13)} Attach reference</label>
+    <input type="file" id="${id}" hidden accept=".pdf,.docx,.odt,.pptx,.rtf,.txt,.md,.html,.htm,.c,.cpp,.py,.java,.png,.jpg,.jpeg,.webp"><span class="refchip" data-chip="${id}"></span>`;
+  const bind = (root) => {
+    const inp = $('#' + id, root), chip = $(`[data-chip="${id}"]`, root);
+    const draw = () => { chip.innerHTML = holder.ref ? `<span class="chip">${ico('file', 12)} ${esc(holder.refName)} · ${holder.refChars >= 1000 ? Math.round(holder.refChars / 1000) + 'k' : holder.refChars} characters read <button type="button" class="linkbtn" data-unref>${ico('x', 11)}</button></span>` : '';
+      $('[data-unref]', chip)?.addEventListener('click', () => { holder.ref = ''; draw(); }); };
+    inp.onchange = async () => { const f = inp.files[0]; if (!f) return; const fd = new FormData(); fd.append('file', f);
+      chip.innerHTML = '<span class="small muted"><span class="spin" style="width:11px;height:11px"></span> Reading the document…</span>';
+      try { const r = await api('POST', `${A}/ai/reference`, fd); Object.assign(holder, { ref: r.ref, refName: r.name, refChars: r.chars }); draw();
+        toast(`Read ${r.name}: questions will follow its topics.${r.warnings.length ? ' ' + r.warnings[0] : ''}`, 'ok'); }
+      catch (e) { holder.ref = ''; draw(); fail(e); } inp.value = ''; };
+    draw();
+  };
+  return { html, bind };
+}
+
 function assistantCard(after) {
   let plan = {};
+  const refs = { ref: '' }, rp = refPicker(refs);
   const TY = { standard: 'coding', debug: 'fix the bug', complete: 'complete the code', output: 'predict the output', trace: 'code tracing', prompt: 'prompt', mcq: 'multiple choice' };
   const el = document.createElement('section'); el.className = 'card asst';
   el.innerHTML = `<div class="asst-head"><div class="asst-ico">${ico('sparkles', 18)}</div><div><h3>Describe a competition</h3><div class="small muted">Say it in plain words. I build the plan and pick matching questions from the bank. You review it, then create the draft.</div></div></div>
     <div class="asst-log" id="asLog"></div>
     <div class="asst-chips" id="asChips">${['60 minute C round for 1st years tomorrow at 10am, 3 easy coding, 2 predict the output, 1 debug', '90 min Python and C round for 2nd and 3rd year, 2 medium coding, 2 code tracing, full screen, no internet', 'Placement mock: 10 moderate mcq, 5 predict the output, 2 medium coding, 60 minutes, full screen, no internet'].map((x) => `<button type="button" class="chipbtn">${esc(x)}</button>`).join('')}</div>
-    <form class="asst-form" id="asForm"><textarea class="input" id="asIn" rows="2" placeholder="For example: 45 minute C round for 1st years on Monday 2pm, 4 easy coding and 2 predict the output, auto submit after 3 warnings"></textarea><button class="btn primary">${ico('right', 14)} Send</button></form>`;
+    <form class="asst-form" id="asForm"><textarea class="input" id="asIn" rows="2" placeholder="For example: 45 minute C round for 1st years on Monday 2pm, 4 easy coding and 2 predict the output, auto submit after 3 warnings"></textarea><button class="btn primary">${ico('right', 14)} Send</button></form>
+    <div class="row" style="gap:8px;margin-top:8px">${rp.html}<span class="tiny muted">Optional: notes or an old paper. When the AI writes missing questions, they follow it.</span></div>`;
   const log = $('#asLog', el), say = (who, html) => { log.insertAdjacentHTML('beforeend', `<div class="asst-msg ${who}">${html}</div>`); log.scrollTop = log.scrollHeight; };
   const show = (r) => {
     plan = r.plan;
@@ -38,7 +59,7 @@ function assistantCard(after) {
     $('[data-as=create]', last)?.addEventListener('click', (e) => busy(e.target, async () => { const x = await POST(`${A}/assistant/competition`, { message: '', plan, create: true });
       say('bot', `<div class="notice ok">${ico('check2', 15)} Draft created: <b>${esc(x.created.title)}</b>. It is not visible to students yet. <a href="#/competitions/${x.created.id}">Open it to review and publish</a>.</div>`); plan = {}; after && after(); }));
     $$('[data-reply]', last).forEach((b) => b.addEventListener('click', () => send(b.dataset.reply)));
-    $('[data-as=fill]', last)?.addEventListener('click', (e) => busy(e.target, async () => show(await POST(`${A}/assistant/competition`, { message: '', plan, fill: true }))));
+    $('[data-as=fill]', last)?.addEventListener('click', (e) => busy(e.target, async () => show(await POST(`${A}/assistant/competition`, { message: '', plan, fill: true, ref: refs.ref }))));
     $('[data-as=shuffle]', last)?.addEventListener('click', async () => { const pl = { ...plan }; delete pl.picked; show(await POST(`${A}/assistant/competition`, { message: '', plan: pl })); });
   };
   const send = async (text) => { if (!text.trim()) return; say('me', esc(text)); $('#asIn', el).value = ''; $('#asChips', el).style.display = 'none';
@@ -46,6 +67,7 @@ function assistantCard(after) {
   $('#asForm', el).onsubmit = (e) => { e.preventDefault(); send($('#asIn', el).value); };
   $('#asIn', el).onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send($('#asIn', el).value); } };
   $$('.chipbtn', el).forEach((b) => b.onclick = () => send(b.textContent));
+  rp.bind(el);
   return el;
 }
 const ldText = (l = {}) => [{ flag: 'internet reported', block: 'internet blocked', allow: 'internet allowed' }[l.internet || 'flag'], l.fullscreen === 'off' ? 'full screen optional' : 'full screen required',
@@ -361,6 +383,7 @@ function compOverview(T, c) {
   };
   if ($('#pub')) $('#pub').onclick = pubToggle(true);
   if ($('#pub2')) $('#pub2').onclick = pubToggle(true);
+  if ($('#explainT')) $('#explainT').onchange = (e) => POST(`${A}/competitions/${c.id}/explain`, { on: e.target.checked }).then(() => toast(e.target.checked ? 'Students will see how ranks were decided' : 'Rank reasons hidden', 'ok')).catch(fail);
   if ($('#unpub2')) $('#unpub2').onclick = pubToggle(false);
   if ($('#sched')) $('#sched').onclick = () => modal({ title: 'Schedule the results', body: `<p class="small muted" style="margin-top:0">Results are released by themselves at this time, but never before the round has ended and every submission is judged.</p>
     <form id="sf">${fld('Release at', `<input class="input" type="datetime-local" name="at" required value="${toLocalInput(c.results_at || (c.end_at ? c.end_at + 15 * 60 : Math.floor(Date.now() / 1000) + 3600))}">`, esc(S.tz))}</form>`,
@@ -396,6 +419,7 @@ function compOverview(T, c) {
           : c.results_at ? `<span class="badge blue">${ico('clock', 12)} Scheduled for ${fmtTime(c.results_at)}</span>` : c.leaderboard_visibility === 'live' ? '<span class="badge violet">Live leaderboard</span>'
           : c.leaderboard_visibility === 'after_end' ? '<span class="badge">Shown when it ends</span>' : '<span class="badge amber">Private until you publish</span>'}</div>
         <div class="small muted" style="margin-bottom:10px">${c.results_published_at ? 'Students can see their scores, ranks and the leaderboard.' : ['ended', 'finalized', 'archived'].includes(c.status) ? 'The round has ended. Release the results now or at a time you choose.' : 'Students do not see scores or ranks until you release them. You can set the release time now.'}</div>
+        <label class="check small" style="margin-bottom:10px"><input type="checkbox" id="explainT" ${c.explain ? 'checked' : ''}> Show students how ranks were decided (rules + a reason on each row)</label>
         <div class="row wrap" style="gap:8px">${c.results_published_at ? `<button class="btn sm" id="unpub2">${ico('eye', 13)} Hide results</button>`
           : `${['ended', 'finalized', 'archived'].includes(c.status) ? `<button class="btn success sm" id="pub2">${ico('megaphone', 13)} Publish now</button>` : ''}<button class="btn sm" id="sched">${ico('clock', 13)} ${c.results_at ? 'Change time' : 'Schedule release'}</button>`}</div></section>` : ''}
       ${['paused', 'ended', 'finalized'].includes(c.status) ? `<section class="card pad"><h3>Saved work</h3><div class="small muted" style="margin-bottom:10px">If a PC, browser or the network failed during the round, grade what each student had in the editor (saved every 30 seconds) where they had not submitted it.</div><button class="btn sm" id="gradeSaved">${ico('rotate', 13)} Grade saved answers</button></section>` : ''}
@@ -918,8 +942,11 @@ async function aiPage() {
         <label class="check" title="When a student has almost no practice left at their level, the AI writes one new problem. It is published only if both of its solutions agree on every test. At most 4 a day, never during a live round.">
           <input type="checkbox" id="aiGrow" ${st.autogrow ? 'checked' : ''}> Grow practice automatically</label></div>` : st.enabled ? `<div class="notice warn" style="margin-bottom:16px">The AI service is not answering: ${esc(st.reason)}</div>` : aiOff(st)) +
     `<form class="card pad askbox" id="askf"><h3 style="margin:0">Ask for questions in plain words</h3><div class="small muted" style="margin:2px 0 10px">Say how many, what kind, how hard and the topic. The AI writes them, the server checks every answer it can by running code, and they wait here for your approval.</div>
-      <div class="row" style="flex-wrap:nowrap;gap:8px"><input class="input lg" name="text" required maxlength="1000" placeholder="e.g. 8 easy mcq on loops and pointers, 2 medium coding on arrays" style="flex:1;min-width:0"><button class="btn primary lg" ${on ? '' : 'disabled'}>${ico('sparkles', 15)} Write</button></div>
-      <div class="row wrap" style="margin-top:10px;gap:6px">${['10 easy predict the output on loops', '5 logical reasoning mcq', '6 moderate mcq on data structures', '2 easy coding on strings', '3 hard coding on arrays'].map((x) => `<button type="button" class="chipbtn" data-ask="${esc(x)}">${esc(x)}</button>`).join('')}</div><div id="askOut"></div></form>
+      <div class="row" style="flex-wrap:nowrap;gap:8px"><input class="input lg" name="text" required maxlength="1000" placeholder="e.g. 6 mcq on loops, 2 fix the bug on arrays, 2 coding on strings" style="flex:1;min-width:0">
+        <select class="select" name="level" style="width:auto;height:44px" title="Level for every part that does not name one"><option value="">Any level</option><option value="Easy">Easy</option><option value="Intermediate">Intermediate</option><option value="Challenging">Hard</option></select>
+        <button class="btn primary lg" ${on ? '' : 'disabled'}>${ico('sparkles', 15)} Write</button></div>
+      <div class="row" style="gap:8px;margin-top:8px" id="askRef"></div>
+      <div class="row wrap" style="margin-top:10px;gap:6px">${['10 easy predict the output on loops', '5 logical reasoning mcq', '3 fix the bug on arrays', '6 moderate mcq on data structures', '2 easy coding on strings', '8 questions from the attached notes'].map((x) => `<button type="button" class="chipbtn" data-ask="${esc(x)}">${esc(x)}</button>`).join('')}</div><div id="askOut"></div></form>
     <div class="how3" style="margin-top:16px"><div><b>1</b> You describe it</div><div><b>2</b> The AI writes it and the server tests it</div><div><b>3</b> You review and approve</div></div>
     <section class="card pad" style="margin-top:16px"><h3 style="margin:0 0 10px">Or fill in the details yourself</h3>
       <div class="pick3">${KINDS.map(([k, ic, name, sub]) => `<button type="button" class="${k === kind ? 'on' : ''}" data-kind="${k}">${ico(ic, 18)}<span><b>${name}</b><small>${sub}</small></span></button>`).join('')}</div>
@@ -940,10 +967,19 @@ async function aiPage() {
   const showKind = (k) => { sessionStorage.setItem('ai:kind', k); $$('[data-kind]', v).forEach((b) => b.classList.toggle('on', b.dataset.kind === k)); $$('[data-for]', v).forEach((f) => { f.hidden = f.dataset.for !== k; }); };
   $$('[data-kind]', v).forEach((b) => b.onclick = () => showKind(b.dataset.kind)); showKind(kind);
   $$('[data-ask]', v).forEach((b) => b.onclick = () => { $('#askf [name=text]').value = b.dataset.ask; $('#askf [name=text]').focus(); });
-  $('#askf').onsubmit = (e) => { e.preventDefault(); busy($('button.primary', e.target), async () => { const r = await POST(`${A}/ai/prompt`, formData(e.target));
+  const askRef = { ref: '' }, arp = refPicker(askRef);
+  $('#askRef').innerHTML = arp.html + '<span class="tiny muted">Optional: attach notes, a syllabus or an old question paper; new questions follow its topics and style.</span>'; arp.bind($('#askf'));
+  const askSend = async (extra = {}) => { const r = await POST(`${A}/ai/prompt`, { ...formData($('#askf')), ref: askRef.ref, ...extra });
+    if (r.ask) {   // the AI needs one answer first (for example: hidden test cases or simple examples)
+      $('#askOut').innerHTML = `<div class="asst-ask" style="margin-top:12px"><b>${esc(r.ask.q)}</b><div class="row wrap" style="gap:6px;margin-top:8px">${r.ask.options.map((o, i) => `<button type="button" class="chipbtn" data-opt-i="${i}">${esc(o.label)}</button>`).join('')}</div></div>`;
+      $$('[data-opt-i]', $('#askOut')).forEach((b) => b.onclick = () => busy(b, async () => { $('#askOut').innerHTML = ''; await askSend({ tests: r.ask.options[b.dataset.optI].tests }); }));
+      return;
+    }
+    $('#askOut').innerHTML = '';
     const ok = r.plan.filter((x) => x.started);
-    toast(ok.length ? `Writing ${ok.reduce((a, x) => a + x.started, 0)} question(s). They appear below as they finish.` : 'That kind of question cannot be written by the AI yet. Try mcq, predict the output or coding.', ok.length ? 'info' : 'err');
-    if (ok.length) setTimeout(goRoute, 600); }); };
+    toast(ok.length ? `Writing ${ok.reduce((a, x) => a + x.started, 0)} question(s). They appear below as they finish.` : 'That kind of question cannot be written by the AI yet. Try mcq, predict the output, fix the bug or coding.', ok.length ? 'info' : 'err');
+    if (ok.length) setTimeout(goRoute, 600); };
+  $('#askf').onsubmit = (e) => { e.preventDefault(); busy($('button.primary', e.target), async () => { await askSend(); }); };
   const setAI = (body) => PUT(`${A}/ai/settings`, body).then(() => toast('Saved', 'ok')).catch(fail);
   if ($('#aiModel')) $('#aiModel').onchange = (e) => setAI({ model: e.target.value });
   if ($('#aiGrow')) $('#aiGrow').onchange = (e) => setAI({ autogrow: e.target.checked });
@@ -953,7 +989,7 @@ async function aiPage() {
   $$('[data-g]', v).forEach((tr) => tr.onclick = () => {
     const g = drafts.find((x) => x.id == tr.dataset.g);
     modal({ title: g.payload.title || 'AI question', body: `<div class="row" style="margin-bottom:10px"><span class="badge ${STAT[g.status][1]}">${STAT[g.status][0]}</span></div>
-      <div class="small muted" style="margin-bottom:6px">What the checks found</div><div class="stack tight">${g.warnings.map((w) => `<div class="notice small ${/passed|Published/.test(w) ? 'ok' : /fail|Still|timed|wrong|could not|Not published/i.test(w) ? 'warn' : ''}">${esc(w)}</div>`).join('') || '<span class="small muted">Still working…</span>'}</div>`,
+      <div class="small muted" style="margin-bottom:6px">What the checks found</div><div class="stack tight">${g.warnings.map((w) => `<div class="notice small ${/passed|Published|proved|Fix the bug: the starter/.test(w) ? 'ok' : /fail|Still|timed|wrong|could not|Not published/i.test(w) ? 'warn' : ''}">${esc(w)}</div>`).join('') || '<span class="small muted">Still working…</span>'}</div>`,
       actions: [...(g.question_id ? [{ label: 'Open question to review & approve', kind: 'primary', onClick: () => nav(`/questions/${g.question_id}`) }] : []), ...(!['rejected', 'approved'].includes(g.status) ? [{ label: 'Reject', kind: 'danger', onClick: async () => { await POST(`${A}/drafts/${g.id}/reject`); goRoute(); } }] : []), { label: 'Close' }] });
   });
   if (drafts.some((g) => g.status === 'generating')) every(async () => { const d = await GET(`${A}/drafts?source=ai`).catch(() => []); if (!d.some((g) => g.status === 'generating')) { clearTimers(); goRoute(); } }, 3000);

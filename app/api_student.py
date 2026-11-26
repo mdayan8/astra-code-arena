@@ -153,13 +153,20 @@ def comp_leaderboard(comp_id: int, req: Request, c=Depends(conn)):
     me = maybe_student(req, c)
     mode = db.setting(c, "name_display", "full")
     lb = contest.leaderboard(c, comp)
-    rows = [{"rank": r["rank"], "name": contest.display_name(r["name"], r["participant_id"], mode), "score": r["score"], "solved": r["solved"],
+    explain = db.setting(c, f"explain:{comp['id']}", "1") == "1"   # organiser's choice when publishing
+    how = contest.explain_ranks({"rows": [dict(r) for r in lb["rows"]]}, contest.scoring_cfg(comp), comp["started_at"] or comp["start_at"] or 0) if explain else None
+    whys = {}
+    if how:
+        tmp = [dict(r) for r in lb["rows"]]
+        contest.explain_ranks({"rows": tmp}, contest.scoring_cfg(comp), comp["started_at"] or comp["start_at"] or 0)
+        whys = {r["user_id"]: r["why"] for r in tmp}
+    rows = [{"rank": r["rank"], "name": contest.display_name(r["name"], r["participant_id"], mode), "score": r["score"], "solved": r["solved"], "why": whys.get(r["user_id"], []),
              "penalty": r["penalty"], "per": r["per"], "me": bool(me and me["id"] == r["user_id"]), "department": r["department"],
              "avatar": r.get("avatar") if mode == "full" else None, "warnings": r.get("warnings", 0), "deducted": r.get("deducted", 0)} for r in lb["rows"]]
     return {"competition": {"id": comp["id"], "title": comp["title"], "code": comp["code"], "round_no": comp["round_no"],
                             "display_status": contest.display_status(comp), "remaining_sec": contest.remaining(comp) if comp["status"] in ("live", "paused") else None},
             "questions": lb["questions"], "rows": rows, "tie_break": lb["tie_break"], "frozen": lb.get("frozen", False),
-            "penalty_minutes": contest.scoring_cfg(comp)["penalty_minutes"], "violation_pct": contest.scoring_cfg(comp).get("violation_pct", 0)}
+            "penalty_minutes": contest.scoring_cfg(comp)["penalty_minutes"], "violation_pct": contest.scoring_cfg(comp).get("violation_pct", 0), "how": how}
 
 
 def semester_board(c, sem):

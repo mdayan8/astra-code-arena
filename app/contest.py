@@ -331,6 +331,34 @@ def semester_leaderboard(c, sem_id):
     return {"competitions": cols, "rows": rows}
 
 
+def explain_ranks(lb, cfg, start=0):
+    """Plain reason for each place: what put this student above the next one. Same rule for everyone."""
+    rows, tb = lb["rows"], cfg.get("tie_break", "penalty")
+    hm = lambda t: f"{(t - start) // 60} min" if t and start else "—"
+    for i, r in enumerate(rows):
+        why = []
+        if r.get("deducted"):
+            why.append(f"−{r['deducted']} marks for {r['warnings']} fair-play warning(s)")
+        nxt = rows[i + 1] if i + 1 < len(rows) else None
+        if not nxt:
+            pass
+        elif r["score"] > nxt["score"]:
+            why.insert(0, f"Higher score than the next place ({r['score']} vs {nxt['score']})")
+        elif tb == "penalty" and r["penalty"] < nxt["penalty"]:
+            why.insert(0, f"Same score as the next place; less penalty time ({r['penalty']} vs {nxt['penalty']} min: time taken plus wrong attempts)")
+        elif r.get("last") and nxt.get("last") and r["last"] < nxt["last"]:
+            why.insert(0, f"Same score; reached it earlier ({hm(r['last'])} vs {hm(nxt['last'])} after the start)")
+        elif r.get("finished_at") and (not nxt.get("finished_at") or r["finished_at"] < nxt["finished_at"]):
+            why.insert(0, "Same score and time; pressed Finish earlier")
+        elif r["rank"] == nxt["rank"]:
+            why.insert(0, "Exactly equal on every rule: shares the rank")
+        r["why"] = why
+    return {"order": ["Higher score (sum of the best mark on each question, minus fair-play deductions)"] +
+                     (["Less penalty time (minutes to each scoring submission + %s min per earlier wrong attempt)" % cfg.get("penalty_minutes", 10)] if tb == "penalty" else []) +
+                     ["Reached that score earlier", "Pressed Finish earlier", "Still equal: same rank (names never decide)"],
+            "deduction": f"Each fair-play warning costs {cfg.get('violation_pct', 0)}% of the student's maximum marks." if cfg.get("violation_pct") else ""}
+
+
 def avatar_url(uid, av):
     return f"/api/avatar/{uid}?v={av.split(':')[-1]}" if av else None
 

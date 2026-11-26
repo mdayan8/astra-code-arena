@@ -21,11 +21,14 @@ def new_draft(c, uid, request, title=""):
                      (json.dumps({"request": request, **({"title": title} if title else {})}), uid, db.now())).lastrowid
 
 
-def spawn(c, uid, m):
-    """Start writing m = {count, type, difficulty, topic} questions. Returns how many were started (0 = this type cannot be written)."""
+def spawn(c, uid, m, reference=""):
+    """Start writing m = {count, type, difficulty, topic} questions, optionally based on a reference document.
+    Returns how many were started (0 = this type cannot be written)."""
     typ, n = m.get("type"), max(1, min(int(m.get("count") or 1), 10))
-    topic = (m.get("topic") or "").strip()
+    topic = (m.get("topic") or "").strip() or ("the topics in the reference material" if reference else "")
     p = {"difficulty": m.get("difficulty") or "Easy"}
+    if reference:
+        p["reference"] = ai.chunk(reference, 0, 4000)
     if typ in ("mcq", "output", "trace"):
         logic = typ == "mcq" and re.search(r"logic|reason|aptitude|puzzle", topic)
         style = "output" if typ != "mcq" or re.search(r"output|predict|trac|code|program|pointer|loop|operator", topic) else "concept"
@@ -35,10 +38,13 @@ def spawn(c, uid, m):
         gid = new_draft(c, uid, p, f"{n} multiple-choice: {p['topic']}")
         threading.Thread(target=ai.run_mcq, args=(gid, p, uid), daemon=True).start()
         return n
-    if typ in (None, "standard"):
-        p.update(topic=topic or "arrays, strings and loops", language="C and Python", samples=2)
-        for _ in range(min(n, 5)):   # each coding problem takes minutes on a small model
-            threading.Thread(target=ai.run_draft, args=(new_draft(c, uid, p), "generate", p, uid), daemon=True).start()
+    if typ in (None, "standard", "debug"):
+        p.update(topic=topic or "arrays, strings and loops", language="C and Python", samples=2, debug=typ == "debug")
+        if m.get("tests") is not None:
+            p["tests"] = bool(m["tests"])
+        for i in range(min(n, 5)):   # each coding problem takes minutes on a small model
+            pi = {**p, "reference": ai.chunk(reference, i)} if reference else p   # each one reads a different part of a long document
+            threading.Thread(target=ai.run_draft, args=(new_draft(c, uid, pi, "Fix the bug: " + topic if typ == "debug" else ""), "generate", pi, uid), daemon=True).start()
         return min(n, 5)
     return 0
 

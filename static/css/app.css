@@ -711,3 +711,15 @@ details.more > summary { cursor: pointer; font-size: 13px; color: var(--muted); 
 .side2 { grid-template-columns: minmax(0, 1fr) var(--side, 340px); }
 @media (max-width: 1180px) { .side2 { grid-template-columns: minmax(0, 1fr) !important; } }
 .kv dd { min-width: 0; overflow-wrap: anywhere; }
+.refbtn { cursor: pointer; } .refchip .chip { display: inline-flex; align-items: center; gap: 6px; }
+.linkbtn { border: 0; background: none; padding: 0; cursor: pointer; color: var(--muted); display: inline-flex; }
+
+.why { color: var(--accent); margin-top: 2px; max-width: 420px; }
+.howbox summary { cursor: pointer; } .howbox ol { margin: 10px 0 6px; padding-left: 18px; line-height: 1.7; }
+/* ---- competition chat: calmer, clearer ---- */
+.asst { border-color: var(--accent-ring); background: linear-gradient(180deg, var(--accent-soft), var(--surface) 140px); }
+.asst-log { display: flex; flex-direction: column; gap: 10px; }
+.asst-msg.me { align-self: flex-end; max-width: 80%; background: var(--accent); color: #fff; border-radius: 14px 14px 4px 14px; padding: 9px 13px; }
+.asst-msg.bot { align-self: flex-start; max-width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 14px 14px 14px 4px; padding: 12px 14px; box-shadow: var(--shadow-sm, none); }
+.asst-form textarea { border-radius: 12px; }
+.asst-ask b { display: block; }

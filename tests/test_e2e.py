@@ -755,6 +755,12 @@ def run():
     assert next(x for x in sup.get(f"{A}/competitions/{cd['id']}/leaderboard")["rows"] if x["name"] == "Bharath K")["warnings"] == 1
     assert me["warnings"] == 2 and me["deducted"] == 8 and me["score"] == 2 and lbd["violation_pct"] == 10, me   # 10 marks - 2 x 10% of 40
     assert len({x["rank"] for x in lbd["rows"] if x["score"] == 0}) == 1                                             # equal results share a rank
+    assert lbd["how"]["order"][0].startswith("Higher score") and me["why"] and "fair-play" in " ".join(me["why"]), me["why"]
+    top = lbd["rows"][0]
+    assert top["why"] and top["why"][0].startswith("Higher score"), top["why"]
+    evA.post(f"{A}/competitions/{cd['id']}/explain", {"on": False})
+    assert s1.get(f"{BASE}/api/competitions/{cd['id']}/leaderboard")["how"] is None
+    evA.post(f"{A}/competitions/{cd['id']}/explain", {"on": True})
     evA.post(f"{A}/competitions/{cd['id']}/action", {"action": "end"})
     ok("each student gets their own 4 of 10 questions (same easy/medium mix, own order, fixed on reload, others refused); 2 warnings cost 2 x 10%")
     qr = evA.post(f"{A}/competitions/quick", {"mcq": 2, "coding": 1, "minutes": 10})
@@ -786,6 +792,25 @@ def run():
     st2 = sup.get(f"{A}/ai/status")
     assert st2.get("reachable") is False and st2["autogrow"] is True and st2["reason"]
     ok("learning path lists the modules in placement order with the next problem; the assistant builds a mock from multiple-choice + coding; AI absence is explained, never an error")
+
+    print("Reference documents and fix-the-bug questions")
+    import pymupdf
+    doc = pymupdf.open(); doc.new_page().insert_text((40, 60), "Unit 3: Stacks\nA stack is LIFO: push adds on top, pop removes from the top.\nSample: push 1, push 2, pop -> top is 1.", fontsize=10)
+    rf = sup.req("POST", f"{A}/ai/reference", files={"file": ("unit3.pdf", doc.tobytes(), "application/pdf")})
+    assert rf["chars"] > 60 and "LIFO" in rf["preview"] and len(rf["ref"]) == 16, rf
+    sup.req("POST", f"{A}/ai/reference", 400, files={"file": ("fake.pdf", b"hello", "application/pdf")})
+    sup.req("POST", f"{A}/ai/reference", 400, files={"file": ("a.exe", b"MZ....", "application/octet-stream")})
+    sup.post(f"{A}/ai/prompt", {"text": "3 mcq", "ref": rf["ref"]}, expect=503)        # no AI on this machine: refused cleanly
+    if not EXTERNAL:
+        from app import ai, db as _db
+        c = _db.connect()
+        qid = next(x for x in s3.get(f"{BASE}/api/student/practice") if x["title"] == "Largest of Three")["id"]
+        log = []
+        assert ai.make_debug(c, qid, sup.get(f"{A}/me")["id"], log), log   # AI is off, so the automatic bug is used
+        q = sup.get(f"{A}/questions/{qid}")
+        assert q["version"]["qtype"] == "debug" and q["version"]["languages"] == ["c"] and q["version"]["starter"]["c"] != q["references"]["c"], log
+        c.close()
+        ok("reference document (PDF) read for AI writing; bad files refused; a checked buggy starter turns a coding problem into fix-the-bug")
 
     print("Rate limiting & recovery")
     bad = Client()
