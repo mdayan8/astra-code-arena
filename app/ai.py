@@ -754,7 +754,7 @@ def run_draft(draft_id: int, kind: str, params: dict, user_id: int = None):
                     c.execute("INSERT INTO reference_solutions(version_id,language,code) VALUES(?,?,?) ON CONFLICT(version_id,language) DO UPDATE SET code=excluded.code", (vid2, lang, code))
                 c.execute("UPDATE test_cases SET expected='', validated=0 WHERE version_id=?", (vid2,))  # recompute from the fixed reference
                 invalidate(c, vid2)
-        if params.get("debug") and any(l.startswith("Sandbox check passed") for l in log):
+        if params.get("debug") and db.one(c, "SELECT qv.validated_at AS v FROM questions q JOIN question_versions qv ON qv.id=q.latest_version_id WHERE q.id=?", qid)["v"]:
             make_debug(c, qid, user_id, log)
         st = "pending"
         if params.get("auto_publish"):   # practice auto-grow: published only when both reference solutions agree on every test
