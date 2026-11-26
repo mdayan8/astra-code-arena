@@ -439,7 +439,7 @@ def assistant_competition(body: AssistIn, req: Request, u=Depends(admin), c=Depe
         out["file"] = found_summary(pdfimport.find_questions(ref_text(body.ref)))
     if not body.create:
         return out
-    if not chosen and not (body.use_file and body.ref):
+    if not chosen and not (body.use_file and body.ref) and not (ai.enabled() and (plan.get("questions") or plan.get("per_student"))):
         raise HTTPException(400, "No questions matched yet. Tell me which questions you want first, or attach a question paper.")
     title = plan.get("title") or assistant.default_title({**plan, "questions": plan.get("questions") or ([{"type": "mcq"}] if body.use_file else [])}, datetime.now(TZ))
     base = re.sub(r"[^A-Z0-9]+", "-", title.upper()).strip("-") or "ROUND"
@@ -461,6 +461,25 @@ def assistant_competition(body: AssistIn, req: Request, u=Depends(admin), c=Depe
     if body.use_file and body.ref:   # every question from the attached paper, as written
         out["file_import"] = import_file(c, u, body.ref, contest.get_comp(c, comp["id"]), plan.get("level") or "Easy", title[:60],
                                          body.per_student or int(plan.get("per_student") or 0), 10, req)
+    # what was asked for: N per student, or the sum of the parts named in the chat
+    asked = body.per_student or int(plan.get("per_student") or 0) or sum(int(q.get("count") or 0) for q in plan.get("questions") or [])
+    have = db.one(c, "SELECT COUNT(*) AS n FROM competition_questions WHERE competition_id=?", comp["id"])["n"]
+    out["writing"] = 0
+    if asked and have < asked and ai.enabled():   # short: the AI writes the rest now (from the attached files if any); checked ones join by themselves
+        from . import pool
+        tag = f"for-comp-{comp['id']}"
+        ref = ref_text(body.ref) if body.ref else ""
+        todo = missing or [{"count": asked - have, "type": "mcq" if (ref or not plan.get("questions")) else None, "difficulty": plan.get("level"), "topic": ""}]
+        for m in todo:
+            out["writing"] += pool.spawn(c, u["id"], {**m, "difficulty": m.get("difficulty") or plan.get("level"), "comp_tag": tag,
+                                                      "tests": plan.get("tests", False) if m.get("type") in (None, "standard", "debug") else None}, ref)
+    total = int(plan.get("total_marks") or 100)
+    if total:   # total marks (100 unless said otherwise) split evenly over what each student answers
+        per_q = max(1, round(total / max(1, (body.per_student or int(plan.get("per_student") or 0)) or have or asked or 1)))
+        c.execute("UPDATE competition_questions SET marks=? WHERE competition_id=?", (per_q, comp["id"]))
+        c.execute("UPDATE competitions SET max_marks=? WHERE id=?", (total, comp["id"]))
+        out["marks_each"] = per_q
+    out["have"], out["asked"] = have, asked
     out.update(created={"id": comp["id"], "title": title, "code": code})
     return out
 

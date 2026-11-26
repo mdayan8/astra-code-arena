@@ -333,7 +333,7 @@ def ocr_page(page):
             return ""
 
 
-NUMBERED = re.compile(r"(?im)^[ \t]*(?:(?:question|problem|prob\.?|task|exercise|q)[ \t]*[-#:.]?[ \t]*)?(\d{1,3})[ \t]*[.):\]][ \t]*(?=\S)")
+NUMBERED = re.compile(r"(?im)^[ \t]*(?:(?:question|problem|prob\.?|task|exercise|q)[ \t]*[-#:.]?[ \t]*)?\(?(\d{1,3})[ \t]*[.):\]-][ \t]*(?=\S)")
 
 
 def numbered_starts(text):

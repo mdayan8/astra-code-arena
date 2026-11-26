@@ -493,6 +493,11 @@ def run_mcq(draft_id: int, params: dict, user_id: int):
                 log.append("The " + ("program" if q["code"] else "calculation") + " could not be run, so the marked answer is the model's guess. Check it before approving.")
             else:
                 log.append("Concept question: read it and confirm the marked answer before approving.")
+            m_tag = re.search(r"for-comp-(\d+)", params.get("comp_tag") or "")
+            if m_tag and any(l.startswith(("Answer proved", "Answer checked", "The model marked a wrong answer")) for l in log):
+                from . import pool
+                if pool.add_to_comp(c, int(m_tag.group(1)), qid):
+                    log.append("Added to the competition.")
             if q["explanation"]:
                 log.append("Model's explanation: " + q["explanation"])
             pay = json.dumps({"title": q["title"], "qtype": "mcq", "harness": "done"})
@@ -760,8 +765,14 @@ def run_draft(draft_id: int, kind: str, params: dict, user_id: int = None):
                     c.execute("INSERT INTO reference_solutions(version_id,language,code) VALUES(?,?,?) ON CONFLICT(version_id,language) DO UPDATE SET code=excluded.code", (vid2, lang, code))
                 c.execute("UPDATE test_cases SET expected='', validated=0 WHERE version_id=?", (vid2,))  # recompute from the fixed reference
                 invalidate(c, vid2)
-        if params.get("debug") and db.one(c, "SELECT qv.validated_at AS v FROM questions q JOIN question_versions qv ON qv.id=q.latest_version_id WHERE q.id=?", qid)["v"]:
+        checked = db.one(c, "SELECT qv.validated_at AS v FROM questions q JOIN question_versions qv ON qv.id=q.latest_version_id WHERE q.id=?", qid)["v"]
+        if params.get("debug") and checked:
             make_debug(c, qid, user_id, log)
+        m_tag = re.search(r"for-comp-(\d+)", params.get("comp_tag") or "")
+        if m_tag and checked and (not params.get("debug") or any(l.startswith("Fix the bug: the starter") for l in log)):
+            from . import pool
+            if pool.add_to_comp(c, int(m_tag.group(1)), qid):
+                log.append("Checked and added to the competition.")
         st = "pending"
         if params.get("auto_publish"):   # practice auto-grow: published only when both reference solutions agree on every test
             ok = any(l.startswith("Sandbox check passed") for l in log) and db.one(c, "SELECT validated_at AS v FROM question_versions qv JOIN questions q ON q.latest_version_id=qv.id WHERE q.id=?", qid)["v"]

@@ -172,5 +172,19 @@ def number_variants(c, cid, per, uid):
     return len(temps)
 
 
+def add_to_comp(c, cid, qid):
+    """Approve a checked question and add it to a draft competition with the same marks as the others there."""
+    comp = db.one(c, "SELECT status FROM competitions WHERE id=?", cid)
+    if not comp or comp["status"] != "draft":
+        return False
+    marks = (db.one(c, "SELECT marks FROM competition_questions WHERE competition_id=? ORDER BY ordinal LIMIT 1", cid) or {}).get("marks") or 10
+    with db.tx(c):
+        c.execute("UPDATE questions SET status='approved' WHERE id=?", (qid,))
+        c.execute("INSERT OR IGNORE INTO competition_questions(competition_id,question_id,version_id,ordinal,marks) VALUES(?,?,"
+                  "(SELECT latest_version_id FROM questions WHERE id=?),(SELECT COALESCE(MAX(ordinal),0)+1 FROM competition_questions WHERE competition_id=?),?)",
+                  (cid, qid, qid, cid, marks))
+    return True
+
+
 def info(c, cid):
     return {"added": len(_added(c, cid)), "max": MAX_ADDED, "working": cid in _busy, "per_students": PER_STUDENTS}

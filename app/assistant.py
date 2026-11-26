@@ -135,6 +135,9 @@ def parse(text, plan=None, departments=(), now=None):
     m = re.search(r"\b(\d{1,2})\s*(?:sets|versions|papers)\b", t)
     if m:
         p["sets"], p["unique"] = max(2, min(10, int(m.group(1)))), True
+    m = re.search(r"\b(\d{1,4})\s*(?:students|participants|people|candidates)\b(?!\s*(?:each|per))", t)
+    if m:
+        p["participants"] = max(1, min(5000, int(m.group(1))))
     m = re.search(r"\b(\d{1,3})\s*(?:questions?\s*)?(?:per|each|for each|for every)\s*student", t)
     if m:
         p["per_student"] = max(1, min(200, int(m.group(1))))
@@ -158,6 +161,9 @@ def parse(text, plan=None, departments=(), now=None):
         for q in qs:
             q["difficulty"] = q["difficulty"] or p.get("level")
         p["questions"] = (p.get("questions", []) + qs) if re.search(r"\badd\b|\balso\b|\bmore\b|\bplus\b", t) and p.get("questions") else qs
+    m = re.search(r"(?:total(?: of)?|out of|for|worth)\s*(\d{2,4})\s*marks?|(\d{2,4})\s*marks?\s*(?:total|in total|overall|altogether)|(\d{2,4})\s*marks? (?:competition|round|quiz|test|paper)", t)
+    if m:
+        p["total_marks"] = max(1, min(10000, int(next(g for g in m.groups() if g))))
     m = re.search(r"(\d+) marks? (?:each|per)", t)
     if m:
         p["marks"] = max(1, min(1000, int(m.group(1))))
@@ -201,7 +207,9 @@ def pick(c, plan):
                       "WHERE cq.question_id=q.id AND co.status IN ('published','live','paused'))")
     random.shuffle(pool)
     chosen, short, missing = [], [], []
-    mult = min(10, max(2, int(plan.get("sets") or 3))) if plan.get("unique") else 1
+    # pool size: as asked ("10 sets"), else from the number of students (about one set per 25 students, 2 to 5), else 3
+    sets = int(plan.get("sets") or 0) or (min(5, max(2, -(-int(plan.get("participants") or 0) // 25))) if plan.get("participants") else 3)
+    mult = min(10, max(2, sets)) if plan.get("unique") else 1
     for s0 in plan.get("questions") or []:
         s = {**s0, "count": s0["count"] * mult}
         words = [w for w in s.get("topic", "").split() if len(w) > 1]
@@ -256,12 +264,14 @@ def describe(plan, chosen, short, now=None):
         ask.append({"q": "What level should it be? Everyone gets the same level.", "chips": ["easy", "moderate", "hard"]})
     if qs and "unique" not in plan:
         ask.append({"q": "Should each student get different questions (same kinds, same level), so neighbours cannot copy?", "chips": ["yes, different questions for each student", "no, same questions for everyone"]})
+    if "participants" not in plan:
+        ask.append({"q": "How many students will take part? (decides how many questions are needed so they get different papers)", "chips": ["about 50 students", "about 100 students", "about 200 students"]})
     if "duration_min" not in plan:
         ask.append({"q": "How long should it run?", "chips": ["30 minutes", "45 minutes", "60 minutes", "90 minutes"]})
     if not plan.get("start_at"):
         ask.append({"q": "When should it start?", "chips": ["start now", "tomorrow at 10am", "next monday 2pm"]})
     return {"lines": lines, "questions": [{"id": q["id"], "title": q["title"], "difficulty": q["difficulty"], "qtype": q["qtype"] or "standard", "category": q["category"]} for q in chosen],
-            "problems": short, "todo": todo, "ask": ask[:2], "ready": bool(chosen)}
+            "problems": short, "todo": todo, "ask": ask[:3], "ready": bool(chosen)}
 
 
 def default_title(plan, now):
@@ -300,6 +310,8 @@ if __name__ == "__main__":  # self-check
     assert p4["questions"][0]["difficulty"] == "Challenging" and p4["level"] == "Challenging", p4
     assert parse("no, same questions for everyone", {"unique": True}, [], now)["unique"] is False
     assert parse("5 questions per student", {}, [], now)["per_student"] == 5 and "questions" not in parse("5 questions per student", {}, [], now)
+    assert parse("about 100 students", {}, [], now)["participants"] == 100 and "participants" not in parse("5 questions per student", {}, [], now)
+    assert parse("total 100 marks", {}, [], now)["total_marks"] == 100 and parse("100 marks quiz", {}, [], now)["total_marks"] == 100
     assert parse("10 sets", {}, [], now)["sets"] == 10 and parse("10 sets", {}, [], now)["unique"]
     assert parse("simple input output only", {}, [], now)["tests"] is False and parse("with hidden test cases", {}, [], now)["tests"] is True
     assert parse("5 logical thinking questions", {}, [], now)["questions"] == [{"count": 5, "type": "mcq", "difficulty": None, "topic": "logical"}]
