@@ -1026,6 +1026,9 @@ def review(comp_id: int, u=Depends(student), c=Depends(conn)):
                         item["reasons"] = [feedback.output_diff(ref["code"], last["code"])]
                 if last["verdict"] == "WA" and last["language"] != "answer" and not fs:
                     item["why"] += " It passed the visible examples, so look for edge cases: smallest and largest values, repeated values, empty or single-item input."
+        if last and last["language"] not in ("answer", "prompt") and best and best["verdict"] == "AC":
+            from . import feedback
+            item["quality"] = feedback.quality(best["code"], best["language"])
         if q["qtype"] in contest.ANSWER_TYPES:
             ref = db.one(c, "SELECT code FROM reference_solutions WHERE version_id=? AND language='answer'", q["id"])
             item["correct_answer"] = ref["code"] if ref else None

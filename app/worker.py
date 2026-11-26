@@ -222,6 +222,10 @@ def loop(slot):
     if judge.IS_ROOT:
         config.JUDGE_TMP.mkdir(parents=True, exist_ok=True)
         os.chmod(config.JUDGE_TMP, 0o711)
+    # A slot that just started cannot be judging anything yet: jobs still marked as ours belong to a previous run of this
+    # slot that was killed (power cut, crash). Re-queue them now; the heartbeat check alone would never fire, because the
+    # restarted slot keeps the same name and heart-beats again at once.
+    c.execute("UPDATE submissions SET status='queued', worker=NULL WHERE status='running' AND worker=?", (name,))
     last_hb = 0
     while not stop["v"]:
         try:

@@ -240,6 +240,20 @@ def compute_leaderboard(c, comp):
     else:
         tk = lambda r: (-r["score"], r["penalty"], r["last"] or late, r["finished_at"] or late)
     rows.sort(key=lambda r: (tk(r), r["name"]))
+    groups = {}
+    for r in rows:
+        groups.setdefault(tk(r), []).append(r)
+    tied = [g for g in groups.values() if len(g) > 1 and g[0]["score"] > 0]
+    if tied:   # still exactly equal: average rule-based quality of their accepted code decides (never changes marks)
+        from . import feedback
+        for g in tied:
+            for r in g:
+                codes = db.all_(c, "SELECT code, language FROM submissions WHERE id IN (SELECT MAX(id) FROM submissions WHERE competition_id=? AND user_id=? "
+                                   "AND kind='submit' AND verdict='AC' AND language NOT IN ('answer','prompt') GROUP BY question_id)", comp["id"], r["user_id"])
+                r["quality"] = round(sum(feedback.quality(x["code"], x["language"])["score"] for x in codes) / len(codes)) if codes else None
+        tk0 = tk
+        tk = lambda r: (*tk0(r), -(r.get("quality") or 0) if r.get("quality") is not None else 0)
+        rows.sort(key=lambda r: (tk(r), r["name"]))
     prev, rank = None, 0
     for i, r in enumerate(rows):
         key = tk(r)
@@ -350,12 +364,15 @@ def explain_ranks(lb, cfg, start=0):
             why.insert(0, f"Same score; reached it earlier ({hm(r['last'])} vs {hm(nxt['last'])} after the start)")
         elif r.get("finished_at") and (not nxt.get("finished_at") or r["finished_at"] < nxt["finished_at"]):
             why.insert(0, "Same score and time; pressed Finish earlier")
+        elif r.get("quality") is not None and nxt.get("quality") is not None and r["quality"] > nxt["quality"]:
+            why.insert(0, f"Equal on everything else; cleaner code ({r['quality']} vs {nxt['quality']} on the code quality check)")
         elif r["rank"] == nxt["rank"]:
             why.insert(0, "Exactly equal on every rule: shares the rank")
         r["why"] = why
     return {"order": ["Higher score (sum of the best mark on each question, minus fair-play deductions)"] +
                      (["Less penalty time (minutes to each scoring submission + %s min per earlier wrong attempt)" % cfg.get("penalty_minutes", 10)] if tb == "penalty" else []) +
-                     ["Reached that score earlier", "Pressed Finish earlier", "Still equal: same rank (names never decide)"],
+                     ["Reached that score earlier", "Pressed Finish earlier", "Cleaner code (rule-based quality check of accepted programs; never changes marks)",
+                      "Still equal: same rank (names never decide)"],
             "deduction": f"Each fair-play warning costs {cfg.get('violation_pct', 0)}% of the student's maximum marks." if cfg.get("violation_pct") else ""}
 
 

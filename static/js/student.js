@@ -365,6 +365,7 @@ async function reviewPage(p) {
         ${q.failed_example ? `<div class="io" style="margin-top:10px"><div><div class="lbl">Example input</div><pre>${esc(q.failed_example.input)}</pre></div><div><div class="lbl">Expected</div><pre>${esc(q.failed_example.expected)}</pre></div><div><div class="lbl">Your program printed</div><pre>${esc(q.failed_example.output || '')}</pre></div></div>` : ''}
         ${q.compiler ? `<div class="lbl" style="margin-top:10px">Compiler message</div><pre class="small">${esc(q.compiler)}</pre>` : ''}
         ${q.tip ? `<div class="notice info small" style="margin-top:10px"><b>How to improve:</b> ${esc(q.tip)}</div>` : ''}
+        ${q.quality ? `<div class="notice small" style="margin-top:10px"><b>Code quality ${q.quality.score}/100</b> <span class="muted">(rule-based; only used to break exact ties)</span><ul style="margin:4px 0 0;padding-left:18px">${q.quality.notes.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''}
         ${q.your_code ? `<details style="margin-top:10px"><summary class="small muted">Your last code (${langName(q.language)})</summary><pre class="small">${esc(q.your_code)}</pre></details>` : ''}
         ${!q.attempts ? '<div class="small muted">You did not attempt this one. Similar questions are in Practice.</div>' : ''}</div></details>`).join('')}</div>
     <div class="row" style="margin-top:16px"><a class="btn" href="#/leaderboard/${d.competition.id}">Leaderboard</a><a class="btn primary" href="#/practice">Practise similar questions</a></div></div>${footer()}`;

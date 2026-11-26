@@ -79,7 +79,70 @@ def explain(verdict, expected=None, got=None, code="", lang="", compile_output="
     return out
 
 
+LOOP_VARS = set("ijknmxyabcst") | {"_"}
+
+
+def quality(code, lang):
+    """Rule-based code quality, 0-100, with the reasons. Same rules for everyone; it never changes marks, only breaks exact ties."""
+    code = (code or "").replace("\r\n", "\n")
+    lines = [l for l in code.split("\n")]
+    body = [l for l in lines if l.strip()]
+    score, notes = 100, []
+
+    def cut(n, why):
+        nonlocal score
+        score -= n
+        notes.append(why)
+    if not body:
+        return {"score": 0, "notes": ["No code."]}
+    if len(code) > 150 and len(body) <= 3:
+        cut(25, "Everything is squeezed onto a few lines: write one statement per line.")
+    long_lines = sum(1 for l in body if len(l) > 120)
+    if long_lines:
+        cut(min(15, 5 * long_lines), f"{long_lines} very long line(s) (over 120 characters): break them up.")
+    if any(l.startswith("\t") for l in body) and any(l.startswith("  ") for l in body):
+        cut(10, "Mixed tabs and spaces for indentation: use one style.")
+    depth = max(((len(l) - len(l.lstrip(" \t"))) // 4 for l in body), default=0)
+    if lang in ("c", "cpp", "java", "javascript", "go", "rust"):
+        braces, deep = 0, 0
+        for ch in re.sub(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'', "", code):
+            braces += (ch == "{") - (ch == "}")
+            deep = max(deep, braces)
+        depth = max(depth, deep - 1)
+    if depth > 4:
+        cut(10, f"Code is nested {depth} levels deep: return early or move parts into a function.")
+    names = set(re.findall(r"\b(?:int|long|float|double|char|bool|auto|var|let|const|String)\s+\*?\s*([A-Za-z_]\w*)", code))
+    if lang == "python":
+        names |= set(re.findall(r"^\s*([A-Za-z_]\w*)\s*=(?!=)", code, re.M))
+    vague = sorted(n for n in names if len(n) == 1 and n not in LOOP_VARS)
+    if len(vague) >= 3:
+        cut(8, f"Several one-letter names ({', '.join(vague[:4])}): use names that say what they hold.")
+    if re.search(r"\bgoto\b", code):
+        cut(10, "Uses goto: use loops and if/else instead.")
+    if lang in ("c", "cpp"):
+        top = re.sub(r"\{[^{}]*\}", "", re.sub(r"\{[^{}]*\}", "", re.sub(r"\{[^{}]*\}", "", code)))
+        if re.search(r"^\s*(?:int|long|float|double|char)\s+\w+(?:\s*\[[^\]]*\])?\s*(?:=[^;]*)?;", top, re.M):
+            cut(5, "Global variables: keep variables inside the function that uses them.")
+        if re.search(r"\bgets\s*\(", code):
+            cut(10, "gets() is unsafe: use fgets() or scanf with a width.")
+    funcs = re.split(r"\n(?=[A-Za-z_][\w\s\*]*\([^;]*\)\s*\{)|\n(?=def )", code)
+    if max((f.count("\n") for f in funcs), default=0) > 60:
+        cut(10, "A function is over 60 lines long: split it into smaller functions.")
+    if len(body) > 25 and not re.search(r"//|/\*|#(?!include|define)", code):
+        cut(5, "No comments in a longer program: a short comment on the tricky part helps readers.")
+    dead = sum(1 for l in body if re.match(r"\s*(?://|#)\s*\w+.*[;:]\s*$", l))
+    if dead >= 3:
+        cut(5, f"{dead} lines of commented-out code: delete code you no longer use.")
+    return {"score": max(0, min(100, score)), "notes": notes or ["Clean and readable."]}
+
+
 if __name__ == "__main__":
+    good = "#include <stdio.h>\nint main(void) {\n    int count;\n    scanf(\"%d\", &count);\n    printf(\"%d\\n\", count * 2);\n    return 0;\n}\n"
+    bad = "#include <stdio.h>\nint g;int main(){int p,q,r,w;scanf(\"%d %d\",&p,&q);r=p+q;w=r*2;if(p>0){if(q>0){if(r>0){if(w>0){if(p>q){printf(\"%d\",w);}}}}}goto e;e:return 0;}"
+    qg, qb = quality(good, "c"), quality(bad, "c")
+    assert qg["score"] == 100 and qb["score"] < 60, (qg, qb)
+    assert any("goto" in n for n in qb["notes"]) and any("one statement per line" in n for n in qb["notes"]), qb
+    assert quality("n = int(input())\nprint(n * 2)\n", "python")["score"] == 100
     assert "nothing" in output_diff("5\n", "")
     assert "spaces" in output_diff("1 2\n", "1 2 \n\n") or "layout" in output_diff("1 2\n", "1  2")
     assert "case" in output_diff("Yes", "YES")
