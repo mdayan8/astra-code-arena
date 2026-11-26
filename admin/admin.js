@@ -411,6 +411,7 @@ function previewComp(c, publishing) {
     modal({ title: publishing ? 'Preview before publishing' : 'Student preview', size: 'wide', body: `<div class="notice info small" style="margin-bottom:12px">This is what students will see. Publishing pins the exact current version of each question.</div>
       <h2>${esc(c.title)}</h2><div class="row small muted" style="margin-bottom:10px"><span class="mono">${esc(c.code)}</span> · Round ${c.round_no} · ${fmtTime(c.start_at)} · ${fmtMins(c.duration_min)} · ${c.languages.map(langName).join(', ')}</div>
       ${c.description ? `<div class="prose">${md(c.description)}</div>` : ''}${c.instructions ? `<div class="card pad prose" style="margin:12px 0">${md(c.instructions)}</div>` : ''}
+      ${['draft', 'published'].includes(c.status) ? `<div class="row" style="gap:8px;margin:-4px 0 12px"><button class="btn sm" id="briefBtn">${ico('sparkles', 13)} Write description &amp; rules again</button><span class="tiny muted">Written from this round's settings and kept up to date until you edit them yourself.</span></div>` : ''}
       <h3>Problems</h3>${c.questions.map((q, i) => `<div class="row" style="padding:6px 0;border-bottom:1px solid var(--border)"><b>${lab(i)}.</b><span class="grow">${esc(q.title)} <span class="tiny muted">v${q.version_no}</span></span>${q.q_status === 'approved' ? '<span class="badge green">approved</span>' : '<span class="badge red">not approved</span>'}${q.validated_at || q.latest_version_id !== q.version_id ? '' : '<span class="badge red">not validated</span>'}<b>${q.marks}</b></div>`).join('') || empty('No questions added')}`,
       actions: publishing ? [{ label: 'Cancel', onClick: () => res(false) }, { label: 'Publish', kind: 'primary', onClick: () => res(true) }] : [{ label: 'Close', kind: 'primary', onClick: () => res(false) }] });
   });
@@ -482,6 +483,7 @@ function compOverview(T, c) {
       <section class="card pad"><h3>Organisers</h3>${c.admins.map((a) => `<div class="small">${esc(a.name)} <span class="muted">@${esc(a.username)}</span></div>`).join('')}${ME.role === 'super_admin' ? '<button class="btn sm" id="setAdmins" style="margin-top:8px">Manage organisers</button>' : ''}</section></div></div>`;
   if ($('#numVar')) $('#numVar').onclick = () => busy($('#numVar'), async () => { const r = await POST(`${A}/competitions/${c.id}/variants`, { per: 1 });
     toast(`Making a number variant of ${r.questions} question(s). Each answer is checked by running the program. Reload in a minute to see them.`, 'info'); });
+  if ($('#briefBtn')) $('#briefBtn').onclick = () => busy($('#briefBtn'), async () => { await POST(`${A}/competitions/${c.id}/brief`, {}); toast('Description and rules written from the settings', 'ok'); goRoute(); });
   if ($('#cchat')) $('#cchat').onsubmit = (e) => { e.preventDefault(); busy($('button', e.target), async () => {
     const r = await POST(`${A}/competitions/${c.id}/assistant`, formData(e.target));
     $('#cchatOut').innerHTML = `<ul class="small" style="margin:10px 0 0;padding-left:20px">${r.done.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`;

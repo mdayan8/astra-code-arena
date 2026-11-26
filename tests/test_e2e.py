@@ -798,10 +798,18 @@ def run():
     ok("same questions for everyone: rotated order, every student starts on a different question; number variants made instantly with answers proved by running")
     easy_mcq = [x for x in mcqs if x["difficulty"] == "Easy"][:2]
     sumq = next(x for x in s3.get(f"{BASE}/api/student/practice") if x["title"] == "Sum of Two Numbers")
-    cw = evA.post(f"{A}/competitions", {**base, "title": "Weighted", "code": "WEIGHTED", "start_at": int(time.time()) + 3600, "fixed_total": 100, "shuffle": False})
+    cw = evA.post(f"{A}/competitions", {**base, "description": "", "instructions": "", "title": "Weighted", "code": "WEIGHTED", "start_at": int(time.time()) + 3600, "fixed_total": 100, "shuffle": False})
     evA.put(f"{A}/competitions/{cw['id']}/questions", {"questions": [{"question_id": x["id"], "marks": 999} for x in [*easy_mcq, sumq]]})
     cwd = evA.get(f"{A}/competitions/{cw['id']}")
     assert cwd["fixed_total"] == 100 and sorted(q["marks"] for q in cwd["questions"]) == [10, 10, 25], [q["marks"] for q in cwd["questions"]]
+    assert "100 marks" in cwd["description"] and "3 questions" in cwd["description"] and "## Fair play" in cwd["instructions"] \
+        and f"lasts **{cwd['duration_min']} minutes**" in cwd["instructions"] and "first submitted answer is final" in cwd["instructions"], cwd["description"]
+    cw2 = evA.put(f"{A}/competitions/{cw['id']}", {**{k: cwd[k] for k in base}, "title": "Weighted", "code": "WEIGHTED", "start_at": cwd["start_at"],
+                                                  "fixed_total": 100, "shuffle": False, "duration_min": 45, "description": cwd["description"], "instructions": "My own rules."})
+    assert "lasts **45 minutes**" not in cw2["instructions"] and cw2["instructions"] == "My own rules." and "45-minute" in cw2["description"], cw2["description"]
+    cw3 = evA.post(f"{A}/competitions/{cw['id']}/brief", {})
+    assert "lasts **45 minutes**" in cw3["instructions"]
+    ok("description, rules and instructions written from the round's own settings, kept in step with changes, hand edits never overwritten, 'write again' on request")
     evA.post(f"{A}/competitions/{cw['id']}/action", {"action": "publish"})
     s3.post(f"{BASE}/api/student/competitions/{cw['id']}/join")
     evA.post(f"{A}/competitions/{cw['id']}/action", {"action": "start"})

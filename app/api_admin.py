@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, 
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from . import ai, config, contest, db, judge, pdfimport
+from . import ai, brief, config, contest, db, judge, pdfimport
 from .api_student import check_dob, conn, departments, dob_password, new_participant_id
 from .security import (ADMIN_COOKIE, MODULES, attempt_login, audit, can_manage_comp, check_password_strength, client_ip, current_user,
                        has, hash_password, login, logout, need, need_comp, perms, temp_password, verify_password)
@@ -405,6 +405,7 @@ def create_comp(body: CompIn, req: Request, u=Depends(admin), c=Depends(conn)):
         c.execute("INSERT INTO competition_admins(competition_id,user_id) VALUES(?,?)", (cid, u["id"]))
         audit(c, u, "competition.create", "competition", cid, cid, {"code": v["code"]}, client_ip(req))
         save_fixed_total(c, cid, body.fixed_total)
+    brief.refresh(c, cid)
     return comp_full(c, contest.get_comp(c, cid))
 
 
@@ -496,6 +497,7 @@ def assistant_competition(body: AssistIn, req: Request, u=Depends(admin), c=Depe
         out["total_marks"] = total
     out["have"], out["asked"] = have, asked
     out.update(created={"id": comp["id"], "title": title, "code": code})
+    brief.refresh(c, comp["id"])
     return out
 
 
@@ -527,6 +529,7 @@ def quick_round(body: QuickIn, req: Request, u=Depends(admin), c=Depends(conn)):
                               duration_min=body.minutes, category="Practice round", languages=["c", "python"], max_marks=100 * len(chosen),
                               allow_late_join=True, leaderboard_visibility="live", lockdown={"max_violations": 3} if body.strict else {"fullscreen": "off", "leave": "allow"}), req, u, c)
     set_questions(comp["id"], QuestionsIn(questions=[{"question_id": q["id"], "marks": 10 if q["qtype"] in judge.ANSWER_QTYPES else 100} for q in chosen]), req, u, c)
+    brief.refresh(c, comp["id"])
     comp_action(comp["id"], ActionIn(action="publish"), req, u, c)
     if contest.get_comp(c, comp["id"])["status"] != "live":   # start time is now, so it usually starts by itself
         comp_action(comp["id"], ActionIn(action="start"), req, u, c)
@@ -588,6 +591,7 @@ def update_comp(cid: int, body: CompIn, req: Request, u=Depends(admin), c=Depend
         if comp["status"] == "draft":
             save_fixed_total(c, cid, body.fixed_total)
         audit(c, u, "competition.update", "competition", cid, cid, {k: v[k] for k in v if k not in ("instructions", "description")}, client_ip(req))
+    brief.refresh(c, cid)
     return comp_full(c, contest.get_comp(c, cid))
 
 
@@ -611,6 +615,7 @@ def set_questions(cid: int, body: QuestionsIn, req: Request, u=Depends(admin), c
         audit(c, u, "competition.questions", "competition", cid, cid, {"questions": [q["question_id"] for q in body.questions]}, client_ip(req))
     if contest.fixed_total(c, cid):   # the question list changed: weights follow
         contest.apply_weights(c, cid)
+    brief.refresh(c, cid)
     return comp_full(c, contest.get_comp(c, cid))
 
 
@@ -1064,6 +1069,17 @@ def grade_saved(cid: int, req: Request, u=Depends(admin), c=Depends(conn)):
     return {"queued": queued, "message": f"{queued} saved answer(s) sent to the judge. Scores update in a minute." if queued else "Nothing new to grade: every saved answer was already submitted."}
 
 
+@router.post("/competitions/{cid}/brief")
+def write_brief(cid: int, req: Request, u=Depends(admin), c=Depends(conn)):
+    """Write the description and rules again from the current settings (replaces hand edits)."""
+    comp = comp_or_404(c, cid, u)
+    if comp["status"] in ("finalized", "archived", "cancelled"):
+        raise HTTPException(409, "This competition is closed.")
+    brief.refresh(c, cid, force=True)
+    audit(c, u, "competition.brief", "competition", cid, cid, {}, client_ip(req))
+    return comp_full(c, contest.get_comp(c, cid))
+
+
 class CompChatIn(BaseModel):
     message: str = Field(min_length=2, max_length=1000)
 
@@ -1116,6 +1132,7 @@ def comp_assistant(cid: int, body: CompChatIn, req: Request, u=Depends(admin), c
         c.execute("UPDATE competitions SET max_marks=? WHERE id=?", (total, cid))
         done.append(f"Every student's paper is worth {total} marks, shared by weight: harder questions and coding / fix-the-bug count more than an easy multiple choice")
     audit(c, u, "competition.assistant", "competition", cid, cid, {"message": body.message[:300]}, client_ip(req))
+    brief.refresh(c, cid)
     return {"done": done or ["I did not find anything to change. Try: '10 questions per student, 6 fix the bug and 4 mcq, total 100 marks'."]}
 
 
@@ -1985,6 +2002,8 @@ def import_file(c, u, tok, comp, difficulty="Easy", category="", per_student=0, 
                 contest.apply_weights(c, comp["id"])
         audit(c, u, "questions.from_file", detail={"ready": len(ready), "drafts": len(drafts), "competition_id": comp["id"] if comp else None},
               ip=client_ip(req) if req else None)
+    if comp:
+        brief.refresh(c, comp["id"])
     if to_run:
         threading.Thread(target=check_file_programs, args=(to_run, comp["id"] if comp else None, u["id"]), daemon=True).start()
     return {"ready": len(ready), "drafts": len(drafts), "draft_ids": drafts[:200], "competition_id": comp["id"] if comp else None,

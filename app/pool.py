@@ -186,6 +186,8 @@ def add_to_comp(c, cid, qid):
         c.execute("INSERT OR IGNORE INTO competition_questions(competition_id,question_id,version_id,ordinal,marks) VALUES(?,?,"
                   "(SELECT latest_version_id FROM questions WHERE id=?),(SELECT COALESCE(MAX(ordinal),0)+1 FROM competition_questions WHERE competition_id=?),?)",
                   (cid, qid, qid, cid, marks))
+    from . import brief
+    brief.refresh(c, cid)
     return True
 
 
