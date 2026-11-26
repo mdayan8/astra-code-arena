@@ -875,6 +875,27 @@ def run():
     q3 = sup.get(f"{A}/questions/{cfd['questions'][2]['question_id']}")
     assert q3["version"]["qtype"] == "mcq" and q3["references"]["answer"] == "6" and q3["version"]["options"] == ["6", "7", "3", "14"], q3["version"]
     evA.post(f"{A}/ai/reference/{paper['ref']}/similar", {"count": 5, "competition_id": cfile["id"]}, expect=503)   # no AI here: refused with a reason
+    messy = "\n".join(["PES Institute of Technology and Management", "Internal Assessment 2   Max Marks: 20",
+                        "1. What is the output? [2 Marks]", "#include <stdio.h>", 'int main(){ printf("%d", 10 / 4); return 0; }',
+                        "A) 2.5", "B) 2", "C) 3", "D) 0", "Answer: A",
+                        "2) Which is not a loop in C?   (1 mark)", "a. for", "b. while", "c. repeat", "d. do-while", "Ans: c", "Page 1 of 2",
+                        "PES Institute of Technology and Management",
+                        "2) Which is not a loop in C?   (1 mark)", "a. for", "b. while", "c. repeat", "d. do-while", "Ans: c",
+                        "3. What does sizeof(char) give?", "A) 1 B) 2 C) 4 D) 8", "Answer: A", "*** All the best ***"])
+    mp = sup.req("POST", f"{A}/ai/reference", files={"file": ("messy.txt", messy.encode(), "text/plain")})
+    assert mp["found"]["total"] == 3 and mp["found"]["mcq_ready"] == 3, mp["found"]        # header, page number, duplicate, "All the best" dropped
+    cm = evA.post(f"{A}/competitions", {**base, "title": "Messy paper", "code": "MESSY", "start_at": int(time.time()) + 3600})
+    im = evA.post(f"{A}/ai/reference/{mp['ref']}/import", {"difficulty": "Easy", "competition_id": cm["id"]})
+    assert im["ready"] == 2 and im["checking"] == 1, im
+    for _ in range(60):
+        cmq = evA.get(f"{A}/competitions/{cm['id']}")["questions"]
+        if len(cmq) == 3:
+            break
+        time.sleep(1)
+    code_q = next(q for q in cmq if "10 / 4" in sup.get(f"{A}/questions/{q['question_id']}")["version"]["statement"])
+    cq = sup.get(f"{A}/questions/{code_q['question_id']}")
+    assert cq["references"]["answer"] == "2" and "Marks" not in cq["version"]["statement"] and "answer-run" in cq["tags"], cq["references"]   # the file said 2.5; C prints 2
+    ok("messy file: header, page numbers, marks, duplicate and 'All the best' removed; the code question was run and its wrong answer key (2.5) corrected to what C prints (2)")
     tagged = evA.post(f"{A}/questions", {"title": "AI-made like the paper", "category": "Unit 1", "difficulty": "Easy", "tags": ["ai", f"for-comp-{cfile['id']}"],
                                          "statement": "What is 6 + 6 in C?", "qtype": "mcq", "options": ["12", "13", "6", "41"], "answer": "12"})
     sup.post(f"{A}/questions/{tagged['id']}/status", {"status": "approved"})

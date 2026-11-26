@@ -374,6 +374,46 @@ OPT_INLINE = re.compile(r"\(([A-Da-d])\)\s*(.+?)(?=\s*\([A-Da-d]\)|$)", re.S)
 ANSWER = re.compile(r"(?im)^[ \t]*(?:correct[ \t]+)?(?:answer|ans|key)[ \t]*[:.\-=)]*[ \t]*\(?([A-Da-d])?\)?[ \t]*[).:\-]?[ \t]*(.*)$")
 
 
+NOISE = re.compile(r"(?im)^\s*(?:page\s*\d+(?:\s*(?:of|/)\s*\d+)?|-\s*\d+\s*-|\d+\s*/\s*\d+|\*+[^*\n]*\*+|"
+                   r"(?:all the best|best of luck|good luck|end of (?:the )?(?:paper|question paper|test)|turn over|p\.?t\.?o\.?)[.!\s]*)\s*$")
+MARKS = re.compile(r"[\[(]\s*\d+(?:\.\d+)?\s*(?:marks?|m|pts?|points?)\s*[\])]|\s*-\s*\d+\s*marks?\b", re.I)
+CODE_LINE = re.compile(r"#include|\bint\s+main\b|\bprintf\s*\(|\bscanf\s*\(|[;{}]\s*$|^\s*(?:for|while|if|else|return|int|char|float|double|long|void)\b")
+
+
+def clean_text(text):
+    """Remove what is not a question: page numbers, repeated headers/footers (college name, exam title), 'All the best'."""
+    lines = text.split("\n")
+    seen = {}
+    for l in lines:
+        k = l.strip()
+        if len(k) > 20:
+            seen[k] = seen.get(k, 0) + 1
+    keep = []
+    for l in lines:
+        k = l.strip()
+        if NOISE.match(l) or (seen.get(k, 0) >= 2 and not NUMBERED.match(l) and not OPT_LINE.match(l) and not ANSWER.match(l)):
+            continue   # repeated on several pages = header or footer
+        keep.append(l)
+    return "\n".join(keep)
+
+
+def tidy_stem(stem):
+    """Marks annotations out; code inside a question shown as a code block."""
+    stem = MARKS.sub("", stem).strip()
+    if "```" in stem:
+        return stem
+    lines, out, code = stem.split("\n"), [], []
+    for l in lines + [""]:
+        if l.strip() and CODE_LINE.search(l):
+            code.append(l)
+            continue
+        if code:
+            out.append("```c\n" + "\n".join(code) + "\n```")
+            code = []
+        out.append(l)
+    return "\n".join(out).strip()
+
+
 def find_mcq(block: str):
     """A multiple-choice question as written in a paper: stem, options (A-D, on lines or inline) and the answer if given.
     -> dict or None when the block has no options."""
@@ -388,12 +428,21 @@ def find_mcq(block: str):
     else:
         first = re.search(r"\([Aa]\)", body)
         inl = list(OPT_INLINE.finditer(body[first.start():])) if first else []
-        if len(inl) < 2:
-            return None
-        stem = body[:first.start()]
-        options = [m.group(2).strip().rstrip(",;") for m in inl]
-        letters = [m.group(1).upper() for m in inl]
-    stem = re.sub(r"^\s*(?:(?:question|q)\s*[-#:.]?\s*)?\d{1,3}\s*[.):\]]\s*", "", stem.strip(), flags=re.I).strip()
+        if len(inl) < 2:   # also "A) 1 B) 2 C) 4 D) 8" on one line
+            line = next((l for l in body.split("\n") if len(re.findall(r"(?:^|\s)[A-Da-d][\).]\s", " " + l)) >= 2), None)
+            if not line:
+                return None
+            first = body.index(line)
+            inl = list(re.finditer(r"(?:^|\s)([A-Da-d])[\).]\s*(.+?)(?=\s+[A-Da-d][\).]\s|$)", line))
+            if len(inl) < 2:
+                return None
+            stem, options, letters = body[:first], [m.group(2).strip().rstrip(",;") for m in inl], [m.group(1).upper() for m in inl]
+        else:
+            stem = body[:first.start()]
+            options = [m.group(2).strip().rstrip(",;") for m in inl]
+            letters = [m.group(1).upper() for m in inl]
+    stem = re.sub(r"^\s*(?:(?:question|q)\s*[-#:.]?\s*)?\(?\d{1,3}\s*[.):\]-]\s*", "", stem.strip(), flags=re.I).strip()
+    stem = tidy_stem(stem)
     answer = None
     if ans:
         letter, rest = (ans.group(1) or "").upper(), (ans.group(2) or "").strip()
@@ -414,16 +463,19 @@ def find_questions(text: str):
     its options and answer; anything else is kept as written for review."""
     if FILE_MARK in text:   # several files: numbering restarts in each, so each file is split on its own
         return [q for part in re.split(r"(?m)^" + re.escape(FILE_MARK) + r".*$", text) if part.strip() for q in find_questions(part)]
-    out = []
+    out, seen = [], set()
+    text = clean_text(text)
     for a, b in split_questions(text):
         block = text[a:b].strip()
         if not block:
             continue
         mcq = find_mcq(block)
-        if mcq:
-            out.append({"kind": "mcq", **mcq, "raw": block[:6000]})
-        else:
-            out.append({"kind": "other", "raw": block[:6000]})
+        q = {"kind": "mcq", **mcq, "raw": block[:6000]} if mcq else {"kind": "other", "raw": tidy_stem(MARKS.sub("", block))[:6000]}
+        key = re.sub(r"\W+", "", (q.get("statement") or q["raw"]).lower())[:300]
+        if key in seen:
+            continue   # the same question printed twice
+        seen.add(key)
+        out.append(q)
     return out
 
 
@@ -552,4 +604,39 @@ Answer: 1
     assert qs[4]["answer"] == "1", qs[4]   # 'Answer: 1' is the option text, not a letter
     steps = "1. Read n.\n2. Loop i from 1 to n.\n3. Print the sum.\nSample: 3 -> 6"
     assert len(find_questions("Problem 1: Sum\n" + steps + "\n\nProblem 2: Max\nRead two numbers and print the larger one.")) == 2
+    messy = """PES Institute of Technology and Management
+Internal Assessment 2
+1. What is the output? [2 Marks]
+#include <stdio.h>
+int main(){ printf("%d", 10 / 4); return 0; }
+A) 2.5
+B) 2
+C) 3
+D) 0
+Answer: A
+2) Which is not a loop?   (1 mark)
+a. for
+b. while
+c. repeat
+d. do-while
+Ans: c
+Page 1 of 2
+PES Institute of Technology and Management
+3. What does sizeof(char) return?
+A) 1 B) 2 C) 4 D) 8
+Answer: A
+2) Which is not a loop?   (1 mark)
+a. for
+b. while
+c. repeat
+d. do-while
+Ans: c
+PES Institute of Technology and Management
+4. Write a C program to find the largest of three numbers. (5 Marks)
+*** All the best ***"""
+    m = find_questions(messy)
+    assert [q["kind"] for q in m] == ["mcq", "mcq", "mcq", "other"], [q["raw"][:30] for q in m]
+    assert "```c" in m[0]["statement"] and "Marks" not in m[0]["statement"] and m[1]["statement"] == "Which is not a loop?", m[1]
+    assert m[2]["options"] == ["1", "2", "4", "8"] and m[2]["answer"] == "1", m[2]
+    assert "All the best" not in m[3]["raw"] and "PES" not in m[3]["raw"] and "Marks" not in m[3]["raw"], m[3]["raw"]
     print("pdfimport self-check ok")

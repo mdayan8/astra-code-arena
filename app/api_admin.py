@@ -1954,14 +1954,16 @@ def import_file(c, u, tok, comp, difficulty="Easy", category="", per_student=0, 
     if comp and comp["status"] != "draft":
         raise HTTPException(409, "Questions can only be added while the competition is a draft. Unpublish it first.")
     cat = (category or "").strip() or "From file"
-    ready, drafts = [], []
+    ready, drafts, to_run = [], [], []
     with db.tx(c):
         for i, q in enumerate(found, 1):
             if q["kind"] == "mcq":
                 title = re.sub(r"\s+", " ", q["statement"])[:70].rstrip(" ?.:") or f"Question {i}"
                 qid = create_question(c, QuestionIn(title=title, category=cat, difficulty=difficulty, tags=["from-file"], statement=q["statement"][:20000],
                                                     qtype="mcq", options=q["options"], answer=q["answer"] or ""), u, "pdf")
-                if q["answer"]:
+                if re.search(r"```c[\s\S]*\bmain\s*\(", q["statement"]):
+                    to_run.append(qid)   # a program in the question: the server runs it before it is used
+                elif q["answer"]:
                     c.execute("UPDATE questions SET status='approved' WHERE id=?", (qid,))
                     ready.append(qid)
                 else:
@@ -1983,8 +1985,38 @@ def import_file(c, u, tok, comp, difficulty="Easy", category="", per_student=0, 
                 contest.apply_weights(c, comp["id"])
         audit(c, u, "questions.from_file", detail={"ready": len(ready), "drafts": len(drafts), "competition_id": comp["id"] if comp else None},
               ip=client_ip(req) if req else None)
+    if to_run:
+        threading.Thread(target=check_file_programs, args=(to_run, comp["id"] if comp else None, u["id"]), daemon=True).start()
     return {"ready": len(ready), "drafts": len(drafts), "draft_ids": drafts[:200], "competition_id": comp["id"] if comp else None,
-            "in_competition": len(ready) if comp else 0}
+            "in_competition": len(ready) if comp else 0, "checking": len(to_run)}
+
+
+def check_file_programs(qids, cid, uid):
+    """Background: a 'what is the output' question from a file is only trusted after the server runs its program.
+    Output matches an option -> that option is the answer (a wrong key in the file is corrected), approved, added to the round.
+    No match / does not compile -> stays a draft tagged please-check."""
+    from . import pool
+    c = db.connect()
+    try:
+        for qid in qids:
+            q = db.one(c, "SELECT q.tags, qv.id AS vid, qv.statement, qv.options FROM questions q JOIN question_versions qv ON qv.id=q.latest_version_id WHERE q.id=?", qid)
+            code = re.search(r"```c\n([\s\S]*?)```", q["statement"]) if q else None
+            out = ai._run(c, qid, q["vid"], uid, "c", code.group(1)) if code else None
+            norm = lambda x: re.sub(r"\s+", " ", str(x)).strip().strip('"\'')
+            match = next((o for o in db.jl(q["options"]) if out is not None and norm(o) == norm(out)), None) if q else None
+            tags = [t for t in db.jl(q["tags"]) if t != "please-check"] if q else []
+            with db.tx(c):
+                if match:
+                    set_answer(c, q["vid"], match)
+                    c.execute("UPDATE questions SET tags=?, status='approved' WHERE id=?", (json.dumps(tags + ["answer-run"]), qid))
+                elif q:
+                    c.execute("UPDATE questions SET tags=? WHERE id=?", (json.dumps(tags + ["please-check"]), qid))
+            if match and cid:
+                pool.add_to_comp(c, cid, qid)
+    except Exception as e:
+        db.log_error(c, "file-check", e)
+    finally:
+        c.close()
 
 
 def ref_text(tok):

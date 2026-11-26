@@ -1063,7 +1063,7 @@ async function aiPage() {
     $('#takeAll').onclick = () => busy($('#takeAll'), async () => {
       const v = (n) => box.querySelector(`[name=${n}]`).value;
       const res = await POST(`${A}/ai/reference/${askRef.ref}/import`, { difficulty: v('fdiff'), category: v('fcat'), competition_id: v('fcomp') ? Number(v('fcomp')) : null, per_student: Number(v('fper') || 0) });
-      box.innerHTML = `<div class="notice ok" style="margin-top:10px">${ico('check', 14)} ${res.ready} question(s) ready${res.in_competition ? ` and added to the competition` : ' in the Question Bank'}${res.drafts ? `; ${res.drafts} saved as drafts to finish (tag <b>to-finish</b> or missing answer)` : ''}.
+      box.innerHTML = `<div class="notice ok" style="margin-top:10px">${ico('check', 14)} ${res.ready} question(s) ready${res.in_competition ? ` and added to the competition` : ' in the Question Bank'}${res.drafts ? `; ${res.drafts} saved as drafts to finish (tag <b>to-finish</b> or missing answer)` : ''}${res.checking ? `; ${res.checking} 'what is the output' question(s) are being run on the server: the real output becomes the answer and they join by themselves (no match = tag <b>please-check</b>)` : ''}.
         ${res.competition_id ? `<a href="#/competitions/${res.competition_id}">Open the competition ${ico('right', 12)}</a>` : `<a href="#/questions">Open the Question Bank ${ico('right', 12)}</a>`}</div>`;
     });
   };
